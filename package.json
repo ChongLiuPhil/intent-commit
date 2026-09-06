@@ -1,6 +1,6 @@
 {
   "name": "intent-commit",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": false,
   "type": "module",
   "description": "An open protocol and deployable reference client for AI-mediated reflective human communication.",
