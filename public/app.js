@@ -11,6 +11,7 @@ const state = {
     enabled: false,
     issuer: null,
     publications: [],
+    events: [],
   },
 };
 
@@ -161,12 +162,20 @@ function federationPublication(messageId) {
   return state.federation.publications.find((item) => item.messageId === messageId) || null;
 }
 
+function federationRelation(messageId) {
+  const publication = federationPublication(messageId);
+  if (!publication) return null;
+  return state.federation.events.find((item) => item.subjectUri === publication.canonicalUri) || null;
+}
+
 async function refreshFederation() {
   state.federation.publications = [];
+  state.federation.events = [];
   if (!state.room || !state.federation.enabled) return;
   try {
     const data = await api(`/api/rooms/${state.room.code}/federation`);
     state.federation.publications = data.publications || [];
+    state.federation.events = data.events || [];
   } catch (error) {
     console.error("Could not load federation state", error);
   }
@@ -192,6 +201,67 @@ async function publishToFederation(messageId) {
       renderRoom();
       return;
     }
+    errorAt("roomError", error.message);
+  }
+}
+
+async function retractFederatedMessage(messageId) {
+  if (!state.room || federationRelation(messageId)) return;
+  const message = state.room.messages.find((item) => item.id === messageId);
+  if (!message || message.author.id !== state.user.id) return;
+  const reason = prompt("Optional public reason for retraction. Leave blank for no reason.", "");
+  if (reason === null) return;
+  if (!confirm("Publish a signed retraction? The original utterance remains verifiable; this adds a public statement that you no longer endorse it.")) return;
+  errorAt("roomError");
+  try {
+    const data = await api(`/api/rooms/${state.room.code}/federation/retract`, {
+      method: "POST",
+      body: JSON.stringify({ messageId, approved: true, reason }),
+    });
+    state.federation.events.push(data.event);
+    renderRoom();
+  } catch (error) {
+    errorAt("roomError", error.message);
+  }
+}
+
+function revisionCandidates(messageId) {
+  return state.room.messages.filter((candidate) => {
+    if (candidate.id === messageId || candidate.author.id !== state.user.id) return false;
+    if (!federationPublication(candidate.id)) return false;
+    return federationRelation(candidate.id)?.type !== "federated-retraction";
+  });
+}
+
+async function reviseFederatedMessage(messageId) {
+  if (!state.room || federationRelation(messageId)) return;
+  const message = state.room.messages.find((item) => item.id === messageId);
+  if (!message || message.author.id !== state.user.id) return;
+  const candidates = revisionCandidates(messageId);
+  if (!candidates.length) {
+    errorAt("roomError", "To revise this utterance, first create a new committed statement through the normal reflection flow and publish that new statement to federation.");
+    return;
+  }
+  const menu = candidates.map((item, index) => `${index + 1}. ${item.statement.slice(0, 100)}${item.statement.length > 100 ? "…" : ""}`).join("\n");
+  const choice = prompt(`Choose the already-federated replacement by number:\n\n${menu}`, "1");
+  if (choice === null) return;
+  const replacement = candidates[Number(choice) - 1];
+  if (!replacement) {
+    errorAt("roomError", "Invalid replacement selection.");
+    return;
+  }
+  const reason = prompt("Optional public reason for the revision link.", "");
+  if (reason === null) return;
+  if (!confirm("Publish a signed revision relation? The original remains part of the public record and will point to the replacement utterance.")) return;
+  errorAt("roomError");
+  try {
+    const data = await api(`/api/rooms/${state.room.code}/federation/revise`, {
+      method: "POST",
+      body: JSON.stringify({ messageId, replacementMessageId: replacement.id, approved: true, reason }),
+    });
+    state.federation.events.push(data.event);
+    renderRoom();
+  } catch (error) {
     errorAt("roomError", error.message);
   }
 }
@@ -223,6 +293,7 @@ function renderRoom() {
 
     const actions = node.querySelector(".message-actions");
     const publication = federationPublication(message.id);
+    const relation = federationRelation(message.id);
     if (publication) {
       const link = document.createElement("a");
       link.className = "federation-link";
@@ -231,6 +302,38 @@ function renderRoom() {
       link.rel = "noopener noreferrer";
       link.textContent = "Federated · signed URI ↗";
       actions.append(link);
+
+      if (relation) {
+        article.classList.add(relation.type === "federated-retraction" ? "is-retracted" : "is-revised");
+        const eventLink = document.createElement("a");
+        eventLink.className = "federation-link relation-link";
+        eventLink.href = relation.eventUri;
+        eventLink.target = "_blank";
+        eventLink.rel = "noopener noreferrer";
+        eventLink.textContent = relation.type === "federated-retraction" ? "Retracted · signed event ↗" : "Revised · signed event ↗";
+        actions.append(eventLink);
+        if (relation.replacementUri) {
+          const replacementLink = document.createElement("a");
+          replacementLink.className = "federation-link";
+          replacementLink.href = relation.replacementUri;
+          replacementLink.target = "_blank";
+          replacementLink.rel = "noopener noreferrer";
+          replacementLink.textContent = "Replacement ↗";
+          actions.append(replacementLink);
+        }
+      } else if (mine) {
+        const retractButton = document.createElement("button");
+        retractButton.className = "ghost small";
+        retractButton.textContent = "Retract";
+        retractButton.addEventListener("click", () => retractFederatedMessage(message.id));
+        actions.append(retractButton);
+
+        const reviseButton = document.createElement("button");
+        reviseButton.className = "ghost small";
+        reviseButton.textContent = "Revise…";
+        reviseButton.addEventListener("click", () => reviseFederatedMessage(message.id));
+        actions.append(reviseButton);
+      }
     } else if (mine && state.federation.enabled) {
       const button = document.createElement("button");
       button.className = "ghost small";
@@ -264,8 +367,9 @@ function connectEvents() {
   closeEvents();
   if (!state.room) return;
   const events = new EventSource(`/api/rooms/${state.room.code}/events`);
-  events.addEventListener("snapshot", (event) => {
+  events.addEventListener("snapshot", async (event) => {
     state.room = JSON.parse(event.data);
+    await refreshFederation();
     renderRoom();
   });
   events.addEventListener("error", () => {
@@ -294,6 +398,7 @@ async function enterLobby() {
   closeEvents();
   state.room = null;
   state.federation.publications = [];
+  state.federation.events = [];
   await refreshMe();
   renderRooms();
   show("lobbyView");
@@ -370,7 +475,7 @@ async function init() {
     const health = await api("/api/health");
     state.federation.enabled = Boolean(health.federation?.enabled);
     state.federation.issuer = health.federation?.issuer || null;
-    const federationMark = state.federation.enabled ? " · FEDERATION" : "";
+    const federationMark = state.federation.enabled ? ` · FED ${health.federation.version}` : "";
     $("#modeBadge").textContent = health.mode === "openai"
       ? `v${health.version} · protocol ${health.protocolVersion} · AI${federationMark}`
       : `v${health.version} · protocol ${health.protocolVersion} · DEMO${federationMark}`;
@@ -443,6 +548,7 @@ $("#logoutBtn").addEventListener("click", async () => {
   state.rooms = [];
   state.room = null;
   state.federation.publications = [];
+  state.federation.events = [];
   renderUser();
   show("authView");
 });
