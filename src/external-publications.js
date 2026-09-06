@@ -22,10 +22,30 @@ export function createExternalPublicationStore(db, { now = () => new Date().toIS
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const byRoom = db.prepare(`SELECT id, room_code, message_id, author_user_id, adapter, target, external_id, external_url, published_at
     FROM external_publications WHERE room_code = ? ORDER BY published_at ASC, rowid ASC`);
-  const duplicate = db.prepare(`SELECT * FROM external_publications WHERE adapter = ? AND target = ? AND message_id = ?`);
+  const duplicate = db.prepare(`SELECT id, room_code, message_id, author_user_id, adapter, target, external_id, external_url, published_at
+    FROM external_publications WHERE adapter = ? AND target = ? AND message_id = ?`);
+
+  function mapRow(row) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      roomCode: row.room_code,
+      messageId: row.message_id,
+      authorUserId: row.author_user_id,
+      adapter: row.adapter,
+      target: row.target,
+      externalId: row.external_id,
+      externalUrl: row.external_url,
+      publishedAt: row.published_at,
+    };
+  }
+
+  function get({ adapter, target, messageId }) {
+    return mapRow(duplicate.get(String(adapter || ""), String(target || ""), String(messageId || "")));
+  }
 
   function record({ roomCode, messageId, authorUserId, adapter, target, externalId = "", externalUrl }) {
-    if (duplicate.get(adapter, target, messageId)) {
+    if (get({ adapter, target, messageId })) {
       throw new Error("This committed message has already been published to that target.");
     }
     const item = {
@@ -44,18 +64,8 @@ export function createExternalPublicationStore(db, { now = () => new Date().toIS
   }
 
   function list(roomCode) {
-    return byRoom.all(String(roomCode || "").toUpperCase()).map((row) => ({
-      id: row.id,
-      roomCode: row.room_code,
-      messageId: row.message_id,
-      authorUserId: row.author_user_id,
-      adapter: row.adapter,
-      target: row.target,
-      externalId: row.external_id,
-      externalUrl: row.external_url,
-      publishedAt: row.published_at,
-    }));
+    return byRoom.all(String(roomCode || "").toUpperCase()).map(mapRow);
   }
 
-  return { record, list };
+  return { get, record, list };
 }
