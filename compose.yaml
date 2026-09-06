@@ -10,6 +10,11 @@ services:
       COOKIE_SECURE: "false"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      FEDERATION_ENABLED: ${FEDERATION_ENABLED:-false}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      FEDERATION_PRIVATE_KEY_PATH: /app/data/federation-private.pem
+      FEDERATION_PUBLIC_KEY_PATH: /app/data/federation-public.pem
     volumes:
       - intent_commit_data:/app/data
     restart: unless-stopped
