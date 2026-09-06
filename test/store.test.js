@@ -51,6 +51,56 @@ test("room membership is account-based and committed messages require approval",
   store.close();
 });
 
+test("owner can promote a moderator and moderator can remove only ordinary members", () => {
+  const store = createPersistentStore({ dbPath: ":memory:", makeCode: () => "GOV001" });
+  const alice = store.register({ username: "alice", displayName: "Alice", password: "password-one" });
+  const bob = store.register({ username: "bob", displayName: "Bob", password: "password-two" });
+  const carol = store.register({ username: "carol", displayName: "Carol", password: "password-three" });
+  const room = store.createRoom({ userId: alice.user.id, roomName: "Governed room" });
+  store.joinRoom({ code: room.code, userId: bob.user.id });
+  store.joinRoom({ code: room.code, userId: carol.user.id });
+
+  store.setMemberRole({ code: room.code, actorUserId: alice.user.id, targetUserId: bob.user.id, role: "moderator" });
+  let snapshot = store.roomSnapshot(room.code, alice.user.id);
+  assert.equal(snapshot.participants.find((p) => p.id === bob.user.id).role, "moderator");
+
+  assert.throws(
+    () => store.removeMember({ code: room.code, actorUserId: bob.user.id, targetUserId: alice.user.id }),
+    /permission/i,
+  );
+  store.removeMember({ code: room.code, actorUserId: bob.user.id, targetUserId: carol.user.id });
+  snapshot = store.roomSnapshot(room.code, alice.user.id);
+  assert.equal(snapshot.participants.some((p) => p.id === carol.user.id), false);
+  store.close();
+});
+
+test("ownership transfer changes authority immediately", () => {
+  const store = createPersistentStore({ dbPath: ":memory:", makeCode: () => "GOV002" });
+  const alice = store.register({ username: "alice", displayName: "Alice", password: "password-one" });
+  const bob = store.register({ username: "bob", displayName: "Bob", password: "password-two" });
+  const room = store.createRoom({ userId: alice.user.id, roomName: "Transfer room" });
+  store.joinRoom({ code: room.code, userId: bob.user.id });
+
+  store.transferOwnership({ code: room.code, actorUserId: alice.user.id, targetUserId: bob.user.id });
+  const bobView = store.roomSnapshot(room.code, bob.user.id);
+  assert.equal(bobView.membership.role, "owner");
+  assert.throws(
+    () => store.setMemberRole({ code: room.code, actorUserId: alice.user.id, targetUserId: bob.user.id, role: "member" }),
+    /only the room owner/i,
+  );
+  store.close();
+});
+
+test("owner cannot leave a populated room before transferring ownership", () => {
+  const store = createPersistentStore({ dbPath: ":memory:", makeCode: () => "GOV003" });
+  const alice = store.register({ username: "alice", displayName: "Alice", password: "password-one" });
+  const bob = store.register({ username: "bob", displayName: "Bob", password: "password-two" });
+  const room = store.createRoom({ userId: alice.user.id, roomName: "Owner room" });
+  store.joinRoom({ code: room.code, userId: bob.user.id });
+  assert.throws(() => store.leaveRoom({ code: room.code, userId: alice.user.id }), /transfer ownership/i);
+  store.close();
+});
+
 test("logout revokes the session", () => {
   const store = memoryStore();
   const result = store.register({ username: "alice", displayName: "Alice", password: "password-one" });
