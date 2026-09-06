@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { demoReflect } from "./src/reflector.js";
 import { reflectWithOpenAI } from "./src/openai.js";
 import { createPersistentStore } from "./src/store.js";
+import { createCommittedMessage, PROTOCOL_VERSION } from "./packages/protocol/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -97,7 +98,7 @@ function requireAuth(req) {
 function statusFor(error) {
   const message = String(error?.message || "");
   if (/Authentication required|Invalid room session/i.test(message)) return 401;
-  if (/not a member/i.test(message)) return 403;
+  if (/not a member|permission|only the room owner|owner must transfer/i.test(message)) return 403;
   if (/not found/i.test(message)) return 404;
   if (/already registered/i.test(message)) return 409;
   return 400;
@@ -109,17 +110,18 @@ function sseWrite(res, event, data) {
 }
 
 function broadcastRoom(code) {
-  const set = subscribers.get(code);
+  const normalized = String(code || "").toUpperCase();
+  const set = subscribers.get(normalized);
   if (!set) return;
   for (const client of [...set]) {
     try {
-      sseWrite(client.res, "snapshot", store.roomSnapshot(code, client.userId));
+      sseWrite(client.res, "snapshot", store.roomSnapshot(normalized, client.userId));
     } catch {
       set.delete(client);
       client.res.end();
     }
   }
-  if (!set.size) subscribers.delete(code);
+  if (!set.size) subscribers.delete(normalized);
 }
 
 async function serveStatic(req, res) {
@@ -150,7 +152,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && pathname === "/api/health") {
     return sendJson(res, 200, {
       ok: true,
-      version: "0.3.0",
+      version: "0.4.0",
+      protocolVersion: PROTOCOL_VERSION,
       persistence: "sqlite",
       mode: process.env.OPENAI_API_KEY ? "openai" : "demo",
       model: process.env.OPENAI_API_KEY ? (process.env.OPENAI_MODEL || "gpt-5.6-luna") : null,
@@ -215,6 +218,62 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  const roleMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/members\/([^/]+)\/role$/);
+  if (req.method === "PATCH" && roleMatch) {
+    try {
+      const user = requireAuth(req);
+      const body = await readJson(req);
+      const room = store.setMemberRole({ code: roleMatch[1], actorUserId: user.id, targetUserId: decodeURIComponent(roleMatch[2]), role: body.role });
+      broadcastRoom(room.code);
+      return sendJson(res, 200, { room });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const memberMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/members\/([^/]+)$/);
+  if (req.method === "DELETE" && memberMatch) {
+    try {
+      const user = requireAuth(req);
+      const room = store.removeMember({ code: memberMatch[1], actorUserId: user.id, targetUserId: decodeURIComponent(memberMatch[2]) });
+      broadcastRoom(room.code);
+      return sendJson(res, 200, { room });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const ownershipMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/ownership$/);
+  if (req.method === "POST" && ownershipMatch) {
+    try {
+      const user = requireAuth(req);
+      const body = await readJson(req);
+      const room = store.transferOwnership({ code: ownershipMatch[1], actorUserId: user.id, targetUserId: String(body.targetUserId || "") });
+      broadcastRoom(room.code);
+      return sendJson(res, 200, { room });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const protocolMessagesMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/protocol\/messages$/);
+  if (req.method === "GET" && protocolMessagesMatch) {
+    try {
+      const user = requireAuth(req);
+      const room = store.roomSnapshot(protocolMessagesMatch[1], user.id);
+      const messages = room.messages.map((message) => createCommittedMessage({
+        id: message.id,
+        roomCode: message.roomCode,
+        author: message.author,
+        statement: message.statement,
+        committedAt: message.committedAt,
+      }));
+      return sendJson(res, 200, { protocolVersion: PROTOCOL_VERSION, messages });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
   const roomMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)$/);
   if (req.method === "GET" && roomMatch) {
     try {
@@ -273,7 +332,7 @@ const server = http.createServer(async (req, res) => {
       const user = requireAuth(req);
       const result = store.leaveRoom({ code: leaveMatch[1], userId: user.id });
       broadcastRoom(result.code);
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 200, { ok: true, deleted: result.deleted });
     } catch (error) {
       return sendJson(res, statusFor(error), { error: error.message });
     }
@@ -305,7 +364,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Intent Commit v0.3 running at http://localhost:${port}`);
+  console.log(`Intent Commit v0.4 running at http://localhost:${port}`);
+  console.log(`Protocol: ${PROTOCOL_VERSION}`);
   console.log(`SQLite: ${databasePath}`);
   console.log(process.env.OPENAI_API_KEY ? "Reflection mode: OpenAI" : "Reflection mode: deterministic demo");
 });
