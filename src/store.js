@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash } from
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { canManageMember, ROOM_ROLES } from "../packages/protocol/index.js";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -113,9 +114,12 @@ export function createPersistentStore({
     deleteExpiredSessions: db.prepare("DELETE FROM sessions WHERE expires_at <= ?"),
     roomByCode: db.prepare("SELECT * FROM rooms WHERE code = ?"),
     insertRoom: db.prepare("INSERT INTO rooms (code, name, created_by, created_at) VALUES (?, ?, ?, ?)"),
+    deleteRoom: db.prepare("DELETE FROM rooms WHERE code = ?"),
     insertMember: db.prepare("INSERT OR IGNORE INTO room_members (room_code, user_id, role, joined_at) VALUES (?, ?, ?, ?)"),
     deleteMember: db.prepare("DELETE FROM room_members WHERE room_code = ? AND user_id = ?"),
+    updateMemberRole: db.prepare("UPDATE room_members SET role = ? WHERE room_code = ? AND user_id = ?"),
     member: db.prepare("SELECT * FROM room_members WHERE room_code = ? AND user_id = ?"),
+    memberCount: db.prepare("SELECT COUNT(*) AS count FROM room_members WHERE room_code = ?"),
     members: db.prepare(`SELECT u.id, u.username, u.display_name, u.created_at, rm.role, rm.joined_at FROM room_members rm JOIN users u ON u.id = rm.user_id WHERE rm.room_code = ? ORDER BY rm.joined_at ASC`),
     messages: db.prepare(`SELECT m.id, m.room_code, m.statement, m.committed_at, u.id AS author_id, u.username AS author_username, u.display_name AS author_display_name FROM messages m JOIN users u ON u.id = m.author_user_id WHERE m.room_code = ? ORDER BY m.committed_at ASC, m.rowid ASC`),
     insertMessage: db.prepare("INSERT INTO messages (id, room_code, author_user_id, statement, committed_at) VALUES (?, ?, ?, ?, ?)"),
@@ -207,15 +211,65 @@ export function createPersistentStore({
   }
 
   function leaveRoom({ code, userId }) {
-    const { room } = requireMembership(code, userId);
+    const { room, membership } = requireMembership(code, userId);
+    if (membership.role === "owner") {
+      const count = Number(q.memberCount.get(room.code).count);
+      if (count > 1) throw new Error("Room owner must transfer ownership before leaving.");
+      q.deleteRoom.run(room.code);
+      return { code: room.code, deleted: true };
+    }
     q.deleteMember.run(room.code, userId);
-    return { code: room.code };
+    return { code: room.code, deleted: false };
+  }
+
+  function setMemberRole({ code, actorUserId, targetUserId, role }) {
+    const { room, membership: actor } = requireMembership(code, actorUserId);
+    if (actor.role !== "owner") throw new Error("Only the room owner can change member roles.");
+    const normalizedRole = String(role || "").trim().toLowerCase();
+    if (!ROOM_ROLES.includes(normalizedRole) || normalizedRole === "owner") {
+      throw new Error("Role must be moderator or member. Use ownership transfer for owner role.");
+    }
+    const target = q.member.get(room.code, targetUserId);
+    if (!target) throw new Error("Target user is not a member of this room.");
+    if (target.role === "owner") throw new Error("The owner role cannot be changed this way.");
+    q.updateMemberRole.run(normalizedRole, room.code, targetUserId);
+    return roomSnapshot(room.code, actorUserId);
+  }
+
+  function transferOwnership({ code, actorUserId, targetUserId }) {
+    const { room, membership: actor } = requireMembership(code, actorUserId);
+    if (actor.role !== "owner") throw new Error("Only the room owner can transfer ownership.");
+    if (targetUserId === actorUserId) throw new Error("You already own this room.");
+    const target = q.member.get(room.code, targetUserId);
+    if (!target) throw new Error("Target user is not a member of this room.");
+
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+      q.updateMemberRole.run("member", room.code, actorUserId);
+      q.updateMemberRole.run("owner", room.code, targetUserId);
+      db.exec("COMMIT;");
+    } catch (error) {
+      db.exec("ROLLBACK;");
+      throw error;
+    }
+    return roomSnapshot(room.code, actorUserId);
+  }
+
+  function removeMember({ code, actorUserId, targetUserId }) {
+    const { room, membership: actor } = requireMembership(code, actorUserId);
+    if (targetUserId === actorUserId) throw new Error("Use leave room to remove yourself.");
+    const target = q.member.get(room.code, targetUserId);
+    if (!target) throw new Error("Target user is not a member of this room.");
+    if (!canManageMember(actor.role, target.role)) throw new Error("You do not have permission to remove this member.");
+    q.deleteMember.run(room.code, targetUserId);
+    return roomSnapshot(room.code, actorUserId);
   }
 
   function roomSnapshot(code, userId) {
     const { room, membership } = requireMembership(code, userId);
     const participants = q.members.all(room.code).map((row) => ({
       id: row.id,
+      username: row.username,
       displayName: row.display_name,
       role: row.role,
       joinedAt: row.joined_at,
@@ -277,6 +331,9 @@ export function createPersistentStore({
     createRoom,
     joinRoom,
     leaveRoom,
+    setMemberRole,
+    transferOwnership,
+    removeMember,
     roomSnapshot,
     listRoomsForUser,
     requireMembership,
