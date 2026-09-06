@@ -1,49 +1,25 @@
-# Multi-user architecture (v0.2)
+# Multi-user model
 
-## Room state
+## Identity
 
-The Node server owns an in-memory room store. Each room contains public participants and committed messages. Private drafts never enter this store.
+v0.3 associates public statements with persistent user accounts rather than temporary browser identities.
 
-## Participant session
+A user can be a member of multiple rooms. Membership survives process restarts because it is stored in SQLite.
 
-Creating or joining a room returns two identifiers:
+## Room flow
 
-- `participantId`: public identity used for message attribution;
-- `participantToken`: private bearer credential used to authenticate room operations.
+1. An authenticated user creates a room or joins an existing room code.
+2. The user drafts privately.
+3. The reflective agent returns an Intent Card.
+4. The user may clarify and re-reflect.
+5. The user explicitly approves the final statement.
+6. The server verifies room membership and `approved === true`.
+7. Only then is the committed statement inserted into SQLite and broadcast to room members.
 
-The token is never included in room snapshots or committed messages.
+## Realtime transport
 
-## Realtime synchronization
+The reference client uses Server-Sent Events (SSE) for room snapshots. SSE carries only public room state. Private drafts are not sent through the room event stream.
 
-Clients open an authenticated SSE stream:
+## Presence
 
-```text
-GET /api/rooms/:code/events?token=...
-```
-
-The server sends `snapshot` events. After a join, commit, or leave operation it broadcasts a fresh room snapshot to connected participants.
-
-## Private reflection
-
-A client sends its raw draft to `POST /api/reflect`. The server authenticates the room session, loads recent committed history as public context, and invokes either the deterministic reflector or the configured OpenAI adapter.
-
-The result is returned only to that requesting client.
-
-## Commit boundary
-
-The final public transition is a separate operation:
-
-```text
-POST /api/rooms/:code/commit
-```
-
-The operation requires `approved: true`. This makes the distinction between "AI suggested this wording" and "the human has committed to this wording" explicit at the API boundary.
-
-## Current limitations
-
-- no database persistence;
-- no account login;
-- no room-owner/moderator roles;
-- no cryptographic end-to-end privacy;
-- participant presence is membership-based rather than true online/offline presence;
-- SSE rather than bidirectional WebSocket transport.
+The v0.3 member list means **room membership**, not guaranteed online presence. Rich presence is intentionally deferred.
