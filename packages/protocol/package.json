@@ -1,0 +1,12 @@
+{
+  "name": "@intent-commit/protocol",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Transport-neutral protocol primitives for reflective, human-approved communication.",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./schemas/intent-card": "./schemas/intent-card.schema.json",
+    "./schemas/committed-message": "./schemas/committed-message.schema.json"
+  }
+}
