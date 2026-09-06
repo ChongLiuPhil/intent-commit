@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intent-commit.dev/schema/intent-card-1.0.json",
+  "title": "Intent Commit Intent Card",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "core_claim",
+    "communicative_intention",
+    "explicit_reasons",
+    "assumptions",
+    "ambiguities",
+    "possible_misinterpretations",
+    "questions_for_speaker",
+    "proposed_statement"
+  ],
+  "properties": {
+    "core_claim": { "type": "string" },
+    "communicative_intention": { "type": "string" },
+    "explicit_reasons": { "type": "array", "items": { "type": "string" } },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "ambiguities": { "type": "array", "items": { "type": "string" } },
+    "possible_misinterpretations": { "type": "array", "items": { "type": "string" } },
+    "questions_for_speaker": { "type": "array", "items": { "type": "string" } },
+    "proposed_statement": { "type": "string" }
+  }
+}
