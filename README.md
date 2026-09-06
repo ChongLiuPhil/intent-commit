@@ -8,26 +8,26 @@ Intent Commit is an open protocol and reference client for **AI-mediated reflect
 
 [简体中文 README](README.zh-CN.md)
 
-## v0.4: protocol + governance + deployment
+## v0.5: first external adapter
 
-v0.4 moves the project beyond a single chat implementation:
+v0.5 proves that the Intent Commit protocol can leave its own reference client without collapsing its consent model.
 
-- a transport-neutral `packages/protocol` module;
-- protocol version `1.0`;
-- machine-testable message-state transitions;
-- JSON Schemas for Intent Cards and committed messages;
-- interoperable committed-message envelopes for adapters;
-- `owner / moderator / member` room roles;
-- owner-controlled moderator promotion/demotion;
-- ownership transfer;
-- role-constrained member removal;
-- Docker and Docker Compose deployment;
-- persistent SQLite accounts, rooms, memberships, roles, sessions, and committed history;
-- SSE live synchronization for the reference client.
+The first adapter publishes an already-COMMITTED message to a GitHub Issue or Pull Request conversation comment.
 
-## Core invariant
+Key rules:
 
-A conforming client must not treat a raw draft as public speech:
+- only protocol-valid `COMMITTED` messages are eligible;
+- room commitment does **not** automatically authorize a larger audience;
+- the original human author must explicitly approve the external publication again;
+- room owners and moderators cannot export someone else's statement;
+- GitHub credentials remain server-side;
+- successful exports are written to a persistent SQLite audit table;
+- duplicate publication of the same message to the same target is rejected;
+- raw drafts, clarification text and Intent Cards never enter the adapter.
+
+The repository includes a public dogfooding target at Issue `#1` for future end-to-end testing.
+
+## Core protocol invariant
 
 ```text
 DRAFT → REFLECTED ↔ CLARIFYING → APPROVED → COMMITTED
@@ -47,20 +47,20 @@ Missing reasons, assumptions, commitments, or intentions should be surfaced as u
 
 ## Protocol package
 
-The reusable protocol lives in:
+The transport-neutral protocol lives in:
 
 ```text
 packages/protocol/
 ```
 
-It exports state-transition rules, room-role capabilities, Intent Card validation, and committed-message envelope creation/validation.
+It exports state transitions, room-role capabilities, Intent Card validation, and committed-message envelope creation/validation.
 
 Schemas:
 
 - `packages/protocol/schemas/intent-card.schema.json`
 - `packages/protocol/schemas/committed-message.schema.json`
 
-Reference server adapter endpoint:
+Reference protocol endpoint:
 
 ```text
 GET /api/rooms/:code/protocol/messages
@@ -68,15 +68,55 @@ GET /api/rooms/:code/protocol/messages
 
 See [`docs/protocol-package.md`](docs/protocol-package.md).
 
+## GitHub Issues adapter
+
+Reusable adapter package:
+
+```text
+packages/adapters-github/
+```
+
+Server configuration:
+
+```env
+GITHUB_TOKEN=...
+```
+
+The token is read only by the Node server. Do not expose it to browser JavaScript or commit it to Git.
+
+Publish endpoint:
+
+```text
+POST /api/rooms/:code/adapters/github/issues/:issueNumber/publish
+```
+
+Body:
+
+```json
+{
+  "repository": "owner/repo",
+  "messageId": "committed-message-id",
+  "approved": true
+}
+```
+
+Audit endpoint:
+
+```text
+GET /api/rooms/:code/exports
+```
+
+See [`docs/adapters/github-issues.md`](docs/adapters/github-issues.md), [`docs/adapters/consent-model.md`](docs/adapters/consent-model.md), and [`docs/adapters/security.md`](docs/adapters/security.md).
+
 ## Room governance
 
-Roles are deliberately narrow:
+Roles remain deliberately narrow:
 
 - **owner** — may promote/demote moderators, remove non-owners, and transfer ownership;
 - **moderator** — may remove ordinary members only;
 - **member** — participates in the room but has no moderation authority.
 
-The owner cannot leave a populated room until ownership has been transferred. Governance never exposes or modifies another participant's private reflection workspace.
+Governance never exposes or modifies another participant's private reflection workspace.
 
 ## Run locally
 
@@ -91,7 +131,7 @@ Open `http://localhost:3000`.
 
 The first start creates `data/intent-commit.sqlite`. The `data/` directory is gitignored.
 
-Without an API key, the project uses a deterministic demo reflector. To enable OpenAI, configure the server-side environment:
+Optional server-side configuration:
 
 ```env
 OPENAI_API_KEY=...
@@ -99,6 +139,7 @@ OPENAI_MODEL=gpt-5.6-luna
 DATABASE_PATH=./data/intent-commit.sqlite
 SESSION_TTL_DAYS=30
 COOKIE_SECURE=false
+GITHUB_TOKEN=
 ```
 
 For an HTTPS deployment, set `COOKIE_SECURE=true`.
@@ -109,11 +150,9 @@ For an HTTPS deployment, set `COOKIE_SECURE=true`.
 docker compose up --build
 ```
 
-SQLite is persisted in the `intent_commit_data` volume. The production `Dockerfile` defaults to a secure cookie and stores the database under `/app/data`.
+SQLite is persisted in the `intent_commit_data` volume. See [`docs/deployment.md`](docs/deployment.md).
 
-See [`docs/deployment.md`](docs/deployment.md).
-
-## API
+## API summary
 
 Authentication:
 
@@ -137,9 +176,11 @@ Governance:
 - `DELETE /api/rooms/:code/members/:userId`
 - `POST /api/rooms/:code/ownership`
 
-Protocol adapters:
+Protocol and adapters:
 
 - `GET /api/rooms/:code/protocol/messages`
+- `POST /api/rooms/:code/adapters/github/issues/:issueNumber/publish`
+- `GET /api/rooms/:code/exports`
 
 Reflection:
 
@@ -147,11 +188,11 @@ Reflection:
 
 ## Persistence and privacy boundary
 
-Stored in SQLite: accounts, password hashes, hashed sessions, rooms, memberships, roles, and committed statements.
+Stored in SQLite: accounts, password hashes, hashed sessions, rooms, memberships, roles, committed statements, and successful external-publication audit records.
 
 Not stored as room discourse: raw drafts, clarification text, Intent Cards, and unapproved reformulations. When an external LLM is enabled, private reflective inputs are processed by that provider.
 
-See [`docs/persistence.md`](docs/persistence.md), [`docs/privacy.md`](docs/privacy.md), and [`docs/multi-user.md`](docs/multi-user.md).
+External publication is treated as a separate consent event because changing the audience changes the practical consequences of an utterance.
 
 ## Development
 
@@ -159,24 +200,26 @@ See [`docs/persistence.md`](docs/persistence.md), [`docs/privacy.md`](docs/priva
 npm test
 ```
 
-Tests cover protocol transitions, message-envelope interoperability, password hashing, session revocation, account-based membership, explicit approval, moderation authority, ownership transfer, and persistence across a database reopen.
+Tests cover protocol transitions, message-envelope interoperability, password hashing, session revocation, membership, explicit approval, governance, persistence, GitHub adapter formatting/request construction, and external-publication audit deduplication.
 
 ## Project structure
 
 ```text
-packages/protocol/    transport-neutral protocol primitives and schemas
-public/               reference web client
-src/reflector.js      Intent Card normalization and demo reflector
-src/openai.js         OpenAI reflection adapter
-src/store.js          SQLite accounts, sessions, rooms, roles and messages
-server.js             HTTP API, auth cookies, governance and SSE transport
-test/                 protocol, reflector and persistence/governance tests
-docs/                 philosophy, protocol, privacy, persistence and deployment notes
+packages/protocol/          transport-neutral protocol primitives and schemas
+packages/adapters-github/   GitHub Issues outbound adapter
+public/                     reference web client
+src/reflector.js            Intent Card normalization and demo reflector
+src/openai.js               OpenAI reflection adapter
+src/store.js                SQLite accounts, sessions, rooms, roles and messages
+src/external-publications.js external publication audit store
+server.js                   HTTP API, auth, governance, adapters and SSE transport
+test/                       protocol, adapter, reflector and persistence tests
+docs/                       philosophy, protocol, privacy, deployment and adapter notes
 ```
 
 ## Current limits
 
-v0.4 is deployable but not yet a hardened public platform. It does not yet include password recovery, rate limiting, audit logs for moderation actions, CSRF tokens beyond SameSite cookies, multi-process realtime fan-out, or formal database migration tooling.
+v0.5 is still a reference implementation. The GitHub bridge is outbound-only and currently requires a server-configured token. The project does not yet include password recovery, rate limiting, formal database migrations, multi-process realtime fan-out, per-room provider credentials, or inbound federation/webhook semantics.
 
 ## License
 
