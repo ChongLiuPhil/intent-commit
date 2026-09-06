@@ -55,14 +55,17 @@ button.primary, button.secondary, button.commit, button.ghost { border-radius: 8
 .empty-state p { color: #6a6862; margin-bottom: 0; }
 .message { padding: 22px 24px; border: 1px solid #d7d3ca; background: #fff; box-shadow: 0 10px 30px rgba(20,20,20,.035); margin-right: 7%; }
 .message.mine { margin-right: 0; margin-left: 7%; }
+.message.is-retracted .statement { text-decoration: line-through; opacity: .62; }
+.message.is-revised .statement { opacity: .74; }
 .message-meta { display: flex; gap: 9px; align-items: center; margin-bottom: 12px; }
 .speaker-name { font-weight: 750; }
 .message time { margin-left: auto; color: #85817a; font-size: 11px; }
 .commit-mark { background: #171717; color: white; border-color: #171717; }
 .statement { white-space: pre-wrap; line-height: 1.65; font-size: 16px; }
-.message-actions { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #eeeae2; }
+.message-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #eeeae2; }
 .federation-link { font-size: 12px; font-weight: 720; color: #35322d; text-decoration: none; border-bottom: 1px solid #8a857a; overflow-wrap: anywhere; }
 .federation-link:hover { border-bottom-color: #171717; }
+.relation-link { font-weight: 800; }
 .compact { margin: 8px 0 12px; font-size: 13px; line-height: 1.5; }
 .step { border-top: 1px solid #dedad1; padding: 22px 0; }
 .step-title { display: flex; align-items: center; gap: 9px; font-weight: 760; margin-bottom: 12px; }
