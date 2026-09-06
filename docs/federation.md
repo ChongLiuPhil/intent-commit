@@ -1,43 +1,47 @@
-# Intent Commit Federation v1.0
+# Intent Commit Federation v1.1
 
-v0.6 introduces **verifiable outbound federation**. It does not yet implement a remote inbox, automatic delivery, following, or ActivityPub compatibility.
+v0.7 extends verifiable outbound federation with **signed retraction and revision relations**. It still does not implement a remote inbox, automatic delivery, following, or ActivityPub compatibility.
 
-The purpose of this phase is narrower: allow a speaker to make one already-COMMITTED utterance publicly addressable and cryptographically verifiable without silently widening the audience of every room message.
+The central rule is that public history is not silently rewritten. A federated utterance remains an immutable signed artifact. If the author later changes their position, the change is represented by a new signed event.
 
 ## Consent boundary
 
-Room commitment and federation publication are separate acts:
+Room commitment, federation publication, and later public correction are distinct acts:
 
 ```text
 Room COMMITTED
       ↓
 Explicit federation approval by the original author
       ↓
-Signed public federation envelope
+Signed public utterance
+      ↓
+Optional later author action
+      ├── signed retraction
+      └── signed revision → separately federated replacement
 ```
 
-A room owner or moderator cannot federate another participant's statement.
+Owners and moderators cannot publish, retract, or revise another participant's federated utterance.
 
 ## Instance identity
 
-When federation is enabled, the server maintains a persistent Ed25519 key pair. By default the files live in the data directory:
+When federation is enabled, the server maintains a persistent Ed25519 key pair. By default:
 
 ```text
 data/federation-private.pem
 data/federation-public.pem
 ```
 
-The private key is never returned by an HTTP endpoint. The public key is discoverable at:
+The private key is never exposed through HTTP. The public key and supported federation versions are discoverable at:
 
 ```text
 GET /.well-known/intent-commit
 ```
 
-The instance identity must remain stable across restarts. Docker Compose therefore stores the key files in the same persistent volume as SQLite.
+Federation v1.1 continues to verify v1.0 utterances already published by earlier Intent Commit versions.
 
-## Publishing
+## Publishing an utterance
 
-Federation is disabled by default. Configure:
+Federation remains opt-in:
 
 ```env
 FEDERATION_ENABLED=true
@@ -46,52 +50,128 @@ FEDERATION_PRIVATE_KEY_PATH=./data/federation-private.pem
 FEDERATION_PUBLIC_KEY_PATH=./data/federation-public.pem
 ```
 
-For a room member, federation state can be inspected with:
-
-```text
-GET /api/rooms/:code/federation
-```
-
-The original author can publish one of their own committed messages with:
+The original author publishes a committed message with:
 
 ```text
 POST /api/rooms/:code/federation/publish
+```
+
+The canonical URI is:
+
+```text
+https://intent.example.org/federation/utterances/<messageId>
+```
+
+Only messages explicitly published this way are public federation objects.
+
+## Retraction
+
+A retraction says that the author no longer endorses a previously federated utterance. It does **not** delete or mutate the original signed object.
+
+```text
+POST /api/rooms/:code/federation/retract
 ```
 
 Body:
 
 ```json
 {
-  "messageId": "committed-message-id",
-  "approved": true
+  "messageId": "old-message-id",
+  "approved": true,
+  "reason": "Optional public reason"
 }
 ```
 
-The resulting canonical public URI has the form:
+The result is a new signed `federated-retraction` event whose `subject` is the original canonical utterance URI.
+
+## Revision
+
+A revision says that a later federated utterance should replace an earlier one as the author's current formulation.
+
+The replacement must first travel through the full Intent Commit path independently:
 
 ```text
-https://intent.example.org/federation/utterances/<messageId>
+private draft → reflect → approve → COMMIT → federation approval
 ```
 
-Only messages explicitly published this way are available through the public federation endpoint.
+Only then can the author link the old public utterance to the new one:
 
-## Signed envelope
+```text
+POST /api/rooms/:code/federation/revise
+```
 
-The signed object contains:
+Body:
 
-- Intent Commit protocol and federation versions;
-- canonical URI;
-- issuer instance;
-- federation publication timestamp;
-- the original protocol-valid COMMITTED message envelope;
-- an Ed25519 proof with the instance key identifier and base64url signature.
+```json
+{
+  "messageId": "old-message-id",
+  "replacementMessageId": "new-message-id",
+  "approved": true,
+  "reason": "Optional public reason"
+}
+```
 
-The signature is calculated over a deterministic JSON serialization of the envelope before the `signature` field is added.
+The result is a signed `federated-revision` event containing both `subject` and `replacement` canonical URIs.
 
-Schema:
+## Relation invariants
+
+v1.1 intentionally keeps relation semantics narrow:
+
+- one federated utterance may have at most one direct retraction-or-revision event;
+- a revision cannot point to itself;
+- the original and replacement must be federated by the same instance;
+- both must belong to the authenticated original author in the room API;
+- the replacement must already have been independently federated;
+- a revision cannot point to an utterance that has already been retracted;
+- revision chains cannot form cycles.
+
+This permits linear chains such as:
+
+```text
+U1 → U2 → U3
+```
+
+while rejecting ambiguous or cyclic histories such as:
+
+```text
+U1 → U2 → U1
+```
+
+## Public discovery
+
+Instance descriptor:
+
+```text
+GET /.well-known/intent-commit
+```
+
+Signed utterance:
+
+```text
+GET /federation/utterances/:messageId
+```
+
+Relations for an utterance:
+
+```text
+GET /federation/utterances/:messageId/relations
+```
+
+Signed relation event:
+
+```text
+GET /federation/events/:eventId
+```
+
+The utterance envelope itself never changes when a relation is added. External systems discover later status through the relation endpoint and verify the relation event separately.
+
+## Signed objects
+
+Schemas:
 
 ```text
 packages/federation/schemas/federated-utterance.schema.json
+packages/federation/schemas/federation-relation.schema.json
 ```
 
 Reusable signing and verification code:
@@ -100,16 +180,22 @@ Reusable signing and verification code:
 packages/federation/index.js
 ```
 
-## Deletion and retraction
+Both utterances and relation events use the persistent instance Ed25519 identity. Tampering with any signed field invalidates verification.
 
-Federation publication is intentionally treated as public publication, not as room storage. A signed federation envelope is persisted independently from the room so its canonical URI remains verifiable even if the local room is later deleted.
+## Persistence
 
-This does **not** mean remote copies can be erased. Once another system has fetched a signed public utterance, deleting local data cannot guarantee deletion of those copies.
+Federated utterances are stored in `federation_publications`. Signed retraction/revision events are stored independently in `federation_events`.
 
-A future federation version may add explicit retraction statements, but a retraction would be a new signed statement about the previous publication rather than a claim that the previous publication never existed.
+Deleting a room cannot erase copies already fetched by remote systems. A retraction therefore means:
+
+> the author publicly records that they no longer endorse the earlier utterance.
+
+It does not mean:
+
+> the earlier utterance never existed.
 
 ## Security scope
 
-v0.6 deliberately does not fetch arbitrary remote federation URLs and does not accept inbound federation payloads. This avoids introducing SSRF, remote spam, replay handling, remote identity binding, moderation of inbound content, and delivery retry semantics before the trust model is defined.
+v0.7 still does not fetch arbitrary remote federation URLs and does not accept inbound federation payloads. This continues to avoid SSRF, remote spam, replay handling, remote identity binding, inbound moderation, and delivery retry semantics until the trust and delivery model is specified.
 
 Production federation should use HTTPS and a stable `PUBLIC_BASE_URL`. Back up the private key securely: losing it means the instance cannot continue signing as the same federation identity.
