@@ -6,8 +6,16 @@ import { demoReflect } from "./src/reflector.js";
 import { reflectWithOpenAI } from "./src/openai.js";
 import { createPersistentStore } from "./src/store.js";
 import { createExternalPublicationStore } from "./src/external-publications.js";
+import { createFederationPublicationStore } from "./src/federation-publications.js";
+import { ensureFederationIdentity } from "./src/federation-identity.js";
 import { createCommittedMessage, PROTOCOL_VERSION } from "./packages/protocol/index.js";
 import { normalizeRepository, publishIssueComment } from "./packages/adapters-github/index.js";
+import {
+  createFederatedUtterance,
+  createInstanceDescriptor,
+  FEDERATION_VERSION,
+  normalizeIssuer,
+} from "./packages/federation/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -36,8 +44,17 @@ const port = Number(process.env.PORT || 3000);
 const sessionTtlDays = Math.max(1, Number(process.env.SESSION_TTL_DAYS || 30));
 const cookieSecure = String(process.env.COOKIE_SECURE || "false").toLowerCase() === "true";
 const databasePath = process.env.DATABASE_PATH || path.join(__dirname, "data", "intent-commit.sqlite");
+const federationEnabled = String(process.env.FEDERATION_ENABLED || "false").toLowerCase() === "true";
+const federationIssuer = federationEnabled ? normalizeIssuer(process.env.PUBLIC_BASE_URL) : null;
+const federationPrivateKeyPath = process.env.FEDERATION_PRIVATE_KEY_PATH || path.join(__dirname, "data", "federation-private.pem");
+const federationPublicKeyPath = process.env.FEDERATION_PUBLIC_KEY_PATH || path.join(__dirname, "data", "federation-public.pem");
+
 const store = createPersistentStore({ dbPath: databasePath, sessionTtlDays });
 const externalPublications = createExternalPublicationStore(store._db);
+const federationPublications = createFederationPublicationStore(store._db);
+const federationIdentity = federationEnabled
+  ? ensureFederationIdentity({ privateKeyPath: federationPrivateKeyPath, publicKeyPath: federationPublicKeyPath })
+  : null;
 const subscribers = new Map();
 
 const MIME = {
@@ -155,12 +172,37 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && pathname === "/api/health") {
     return sendJson(res, 200, {
       ok: true,
-      version: "0.5.0",
+      version: "0.6.0",
       protocolVersion: PROTOCOL_VERSION,
+      federation: {
+        enabled: federationEnabled,
+        version: FEDERATION_VERSION,
+        issuer: federationIssuer,
+      },
       persistence: "sqlite",
       mode: process.env.OPENAI_API_KEY ? "openai" : "demo",
       model: process.env.OPENAI_API_KEY ? (process.env.OPENAI_MODEL || "gpt-5.6-luna") : null,
       adapters: { githubIssues: Boolean(process.env.GITHUB_TOKEN) },
+    });
+  }
+
+  if (req.method === "GET" && pathname === "/.well-known/intent-commit") {
+    if (!federationEnabled) return sendJson(res, 404, { error: "Federation is disabled on this instance." });
+    return sendJson(res, 200, createInstanceDescriptor({
+      issuer: federationIssuer,
+      publicKey: federationIdentity.publicKey,
+      protocolVersion: PROTOCOL_VERSION,
+    }), { "Cache-Control": "public, max-age=300" });
+  }
+
+  const publicUtteranceMatch = pathname.match(/^\/federation\/utterances\/([^/]+)$/);
+  if (req.method === "GET" && publicUtteranceMatch) {
+    if (!federationEnabled) return sendJson(res, 404, { error: "Federation is disabled on this instance." });
+    const publication = federationPublications.getByMessageId(decodeURIComponent(publicUtteranceMatch[1]));
+    if (!publication) return sendJson(res, 404, { error: "Federated utterance not found." });
+    return sendJson(res, 200, publication.envelope, {
+      "Content-Type": "application/intent-commit+json; charset=utf-8",
+      "Cache-Control": "public, max-age=300",
     });
   }
 
@@ -284,6 +326,74 @@ const server = http.createServer(async (req, res) => {
       const user = requireAuth(req);
       store.roomSnapshot(exportsMatch[1], user.id);
       return sendJson(res, 200, { publications: externalPublications.list(exportsMatch[1]) });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const federationListMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/federation$/);
+  if (req.method === "GET" && federationListMatch) {
+    try {
+      const user = requireAuth(req);
+      store.roomSnapshot(federationListMatch[1], user.id);
+      return sendJson(res, 200, {
+        enabled: federationEnabled,
+        issuer: federationIssuer,
+        publications: federationPublications.listByRoom(federationListMatch[1]).map((item) => ({
+          messageId: item.messageId,
+          canonicalUri: item.canonicalUri,
+          publishedAt: item.publishedAt,
+        })),
+      });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const federationPublishMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/federation\/publish$/);
+  if (req.method === "POST" && federationPublishMatch) {
+    try {
+      const user = requireAuth(req);
+      if (!federationEnabled) return sendJson(res, 503, { error: "Federation is not configured on this server." });
+      const body = await readJson(req);
+      if (body.approved !== true) return sendJson(res, 400, { error: "Explicit federation-publication approval is required." });
+
+      const room = store.roomSnapshot(federationPublishMatch[1], user.id);
+      const messageId = String(body.messageId || "").trim();
+      const message = room.messages.find((item) => item.id === messageId);
+      if (!message) return sendJson(res, 404, { error: "Committed message not found." });
+      if (message.author.id !== user.id) return sendJson(res, 403, { error: "Only the original author may publish this committed message to federation." });
+
+      const existing = federationPublications.getByMessageId(messageId);
+      if (existing) return sendJson(res, 409, {
+        error: "This committed message has already been published to federation.",
+        publication: { messageId: existing.messageId, canonicalUri: existing.canonicalUri, publishedAt: existing.publishedAt },
+      });
+
+      const committed = createCommittedMessage({
+        id: message.id,
+        roomCode: message.roomCode,
+        author: message.author,
+        statement: message.statement,
+        committedAt: message.committedAt,
+      });
+      const envelope = createFederatedUtterance({
+        issuer: federationIssuer,
+        message: committed,
+        privateKey: federationIdentity.privateKey,
+        publicKey: federationIdentity.publicKey,
+      });
+      const publication = federationPublications.record({
+        messageId: message.id,
+        roomCode: room.code,
+        authorUserId: user.id,
+        canonicalUri: envelope.id,
+        envelope,
+      });
+      return sendJson(res, 201, {
+        publication: { messageId: publication.messageId, canonicalUri: publication.canonicalUri, publishedAt: publication.publishedAt },
+        envelope,
+      });
     } catch (error) {
       return sendJson(res, statusFor(error), { error: error.message });
     }
@@ -434,11 +544,12 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Intent Commit v0.5 running at http://localhost:${port}`);
+  console.log(`Intent Commit v0.6 running at http://localhost:${port}`);
   console.log(`Protocol: ${PROTOCOL_VERSION}`);
   console.log(`SQLite: ${databasePath}`);
   console.log(process.env.OPENAI_API_KEY ? "Reflection mode: OpenAI" : "Reflection mode: deterministic demo");
   console.log(process.env.GITHUB_TOKEN ? "GitHub Issues adapter: enabled" : "GitHub Issues adapter: disabled");
+  console.log(federationEnabled ? `Federation: enabled as ${federationIssuer}` : "Federation: disabled");
 });
 
 function shutdown() {
