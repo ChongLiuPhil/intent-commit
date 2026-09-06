@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Intent Commit — multi-user reflective communication with AI-assisted intent clarification." />
+  <meta name="description" content="Intent Commit — persistent multi-user reflective communication." />
   <title>Intent Commit</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
@@ -14,96 +14,111 @@
       <div class="tagline">Think before you commit.</div>
     </div>
     <div class="status-wrap">
-      <span id="roomBadge" class="badge hidden"></span>
       <span id="modeBadge" class="badge">checking…</span>
-      <button id="leaveBtn" class="ghost small hidden">Leave room</button>
+      <span id="userBadge" class="badge hidden"></span>
+      <button id="logoutBtn" class="ghost small hidden">Log out</button>
     </div>
   </header>
 
-  <main>
-    <section id="lobby" class="lobby-shell">
-      <div class="lobby-card">
-        <p class="eyebrow">MULTI-USER v0.2</p>
-        <h1>Enter a reflective room.</h1>
-        <p class="muted lobby-copy">Each participant drafts privately. Only statements they explicitly approve are shared with the room.</p>
-
-        <label for="displayName">Your display name</label>
-        <input id="displayName" maxlength="60" placeholder="e.g. John" autocomplete="nickname" />
-
-        <div class="lobby-grid">
-          <section class="lobby-option">
-            <h2>Create a room</h2>
-            <label for="roomName">Room name <span class="optional">optional</span></label>
-            <input id="roomName" maxlength="80" placeholder="e.g. Philosophy discussion" />
-            <button id="createRoomBtn" class="primary full">Create room</button>
-          </section>
-
-          <section class="lobby-option">
-            <h2>Join a room</h2>
-            <label for="roomCode">Room code</label>
-            <input id="roomCode" maxlength="12" placeholder="ABC123" autocapitalize="characters" />
-            <button id="joinRoomBtn" class="secondary full">Join room</button>
-          </section>
-        </div>
-        <p id="lobbyError" class="error hidden"></p>
+  <main id="authView" class="center-shell">
+    <section class="card auth-card">
+      <p class="eyebrow">PERSISTENT MULTI-USER v0.3</p>
+      <h1>Enter the conversation deliberately.</h1>
+      <p class="muted">Create an account or sign in. Passwords are hashed server-side; the browser receives only an HttpOnly session cookie.</p>
+      <div class="tabs">
+        <button class="tab active" data-auth-tab="login">Sign in</button>
+        <button class="tab" data-auth-tab="register">Create account</button>
       </div>
+      <form id="loginForm" class="stack">
+        <label>Username <input id="loginUsername" autocomplete="username" required /></label>
+        <label>Password <input id="loginPassword" type="password" autocomplete="current-password" minlength="8" required /></label>
+        <button class="primary">Sign in</button>
+      </form>
+      <form id="registerForm" class="stack hidden">
+        <label>Username <input id="registerUsername" autocomplete="username" pattern="[A-Za-z0-9][A-Za-z0-9_.-]{2,31}" required /></label>
+        <label>Display name <input id="registerDisplayName" maxlength="60" required /></label>
+        <label>Password <input id="registerPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label>
+        <button class="primary">Create account</button>
+      </form>
+      <p id="authError" class="error hidden"></p>
     </section>
+  </main>
 
-    <section id="workspace" class="layout hidden">
-      <section class="conversation-panel" aria-label="Committed conversation">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">PUBLIC COMMITTED SPACE</p>
-            <h1 id="roomTitle">Committed discourse</h1>
-          </div>
-          <div class="room-tools">
-            <button id="copyInviteBtn" class="ghost small">Copy invite link</button>
-            <p class="muted compact" id="roomMeta"></p>
-          </div>
-        </div>
-
-        <div id="participants" class="participants"></div>
-        <div id="conversation" class="conversation"></div>
+  <main id="lobbyView" class="center-shell hidden">
+    <section class="card lobby-card">
+      <p class="eyebrow">ROOMS</p>
+      <h1>Your reflective conversations</h1>
+      <div class="lobby-grid">
+        <form id="createRoomForm" class="panel stack">
+          <h2>Create a room</h2>
+          <label>Room name <input id="roomName" maxlength="80" placeholder="Research disagreement" /></label>
+          <button class="primary">Create room</button>
+        </form>
+        <form id="joinRoomForm" class="panel stack">
+          <h2>Join with a code</h2>
+          <label>Room code <input id="joinCode" maxlength="8" placeholder="ABC234" /></label>
+          <button class="secondary">Join room</button>
+        </form>
+      </div>
+      <section class="rooms-section">
+        <h2>Your rooms</h2>
+        <div id="roomList" class="room-list"></div>
       </section>
-
-      <aside class="composer-panel" aria-label="Private reflective space">
-        <div class="private-head">
-          <div>
-            <p class="eyebrow">PRIVATE REFLECTIVE SPACE</p>
-            <strong id="identityLabel"></strong>
-          </div>
-          <span class="private-chip">NOT SHARED</span>
-        </div>
-
-        <div class="step active-step" data-step="1">
-          <div class="step-title"><span>1</span> Draft</div>
-          <textarea id="draft" rows="7" placeholder="Write what you currently want to say. Other room members cannot see this draft."></textarea>
-          <button id="reflectBtn" class="primary full">Reflect with AI</button>
-        </div>
-
-        <div id="reflectionStep" class="step hidden" data-step="2">
-          <div class="step-title"><span>2</span> Inspect the interpretation</div>
-          <p class="muted compact">Correct the agent where it misunderstood you. Missing reasons should become questions, not invented arguments.</p>
-          <div id="intentCard" class="intent-card"></div>
-
-          <label for="clarification">Clarification for the agent</label>
-          <textarea id="clarification" rows="4" placeholder="Example: I am not rejecting the proposal. I only want the long-term risk examined first."></textarea>
-          <button id="reReflectBtn" class="secondary full">Re-reflect with clarification</button>
-        </div>
-
-        <div id="commitStep" class="step hidden" data-step="3">
-          <div class="step-title"><span>3</span> Commit</div>
-          <label for="finalStatement">Your approved statement</label>
-          <textarea id="finalStatement" rows="8"></textarea>
-          <label class="checkline">
-            <input id="approveCheck" type="checkbox" />
-            <span>This represents what I am willing to mean in this conversation.</span>
-          </label>
-          <button id="commitBtn" class="commit full" disabled>Commit &amp; Send</button>
-          <p class="fineprint">Only this approved statement is published to the room. The raw draft and Intent Card are not broadcast to other participants.</p>
-        </div>
-      </aside>
+      <p id="lobbyError" class="error hidden"></p>
     </section>
+  </main>
+
+  <main id="roomView" class="layout hidden">
+    <section class="conversation-panel" aria-label="Committed conversation">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">PUBLIC COMMITTED SPACE</p>
+          <h1 id="roomTitle">Room</h1>
+          <div class="room-meta">
+            <span id="roomCodeBadge" class="badge"></span>
+            <button id="copyInviteBtn" class="ghost small">Copy invite link</button>
+            <button id="leaveRoomBtn" class="ghost small">Leave room</button>
+          </div>
+        </div>
+        <div class="members-box">
+          <strong>Members</strong>
+          <div id="memberList" class="member-list"></div>
+        </div>
+      </div>
+      <div id="conversation" class="conversation"></div>
+    </section>
+
+    <aside class="composer-panel" aria-label="Private reflective space">
+      <p class="eyebrow">PRIVATE REFLECTIVE SPACE</p>
+      <p class="muted compact">Your draft, clarification and Intent Card are not stored in the room history. Only the final approved statement is committed.</p>
+
+      <div class="step active-step">
+        <div class="step-title"><span>1</span> Draft privately</div>
+        <textarea id="draft" rows="7" placeholder="Write what you currently want to say."></textarea>
+        <button id="reflectBtn" class="primary full">Reflect with AI</button>
+      </div>
+
+      <div id="reflectionStep" class="step hidden">
+        <div class="step-title"><span>2</span> Inspect the interpretation</div>
+        <div id="intentCard" class="intent-card"></div>
+        <label for="clarification">Clarification for the agent</label>
+        <textarea id="clarification" rows="4" placeholder="Correct anything the agent misunderstood."></textarea>
+        <button id="reReflectBtn" class="secondary full">Re-reflect with clarification</button>
+      </div>
+
+      <div id="commitStep" class="step hidden">
+        <div class="step-title"><span>3</span> Commit</div>
+        <label for="finalStatement">Speaker-approved statement</label>
+        <textarea id="finalStatement" rows="8"></textarea>
+        <label class="checkline">
+          <input id="approveCheck" type="checkbox" />
+          <span>This represents what I am willing to mean in this conversation.</span>
+        </label>
+        <button id="commitBtn" class="commit full" disabled>Commit &amp; Send</button>
+        <p class="fineprint">The server independently requires explicit approval. A raw draft cannot be committed directly.</p>
+      </div>
+      <p id="roomError" class="error hidden"></p>
+    </aside>
   </main>
 
   <template id="messageTemplate">
