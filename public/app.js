@@ -7,6 +7,11 @@ const state = {
   room: null,
   card: null,
   events: null,
+  federation: {
+    enabled: false,
+    issuer: null,
+    publications: [],
+  },
 };
 
 const fields = [
@@ -38,6 +43,7 @@ async function api(path, options = {}) {
   if (!response.ok) {
     const error = new Error(data.error || `HTTP ${response.status}`);
     error.status = response.status;
+    error.data = data;
     throw error;
   }
   return data;
@@ -151,6 +157,45 @@ async function runMemberAction(button) {
   }
 }
 
+function federationPublication(messageId) {
+  return state.federation.publications.find((item) => item.messageId === messageId) || null;
+}
+
+async function refreshFederation() {
+  state.federation.publications = [];
+  if (!state.room || !state.federation.enabled) return;
+  try {
+    const data = await api(`/api/rooms/${state.room.code}/federation`);
+    state.federation.publications = data.publications || [];
+  } catch (error) {
+    console.error("Could not load federation state", error);
+  }
+}
+
+async function publishToFederation(messageId) {
+  if (!state.room || !state.federation.enabled) return;
+  const message = state.room.messages.find((item) => item.id === messageId);
+  if (!message || message.author.id !== state.user.id) return;
+  const warning = "Publish this committed statement to the federation? This creates a public, signed canonical URI. Copies made by other systems cannot be recalled by deleting this room.";
+  if (!confirm(warning)) return;
+  errorAt("roomError");
+  try {
+    const data = await api(`/api/rooms/${state.room.code}/federation/publish`, {
+      method: "POST",
+      body: JSON.stringify({ messageId, approved: true }),
+    });
+    state.federation.publications.push(data.publication);
+    renderRoom();
+  } catch (error) {
+    if (error.status === 409 && error.data?.publication) {
+      state.federation.publications.push(error.data.publication);
+      renderRoom();
+      return;
+    }
+    errorAt("roomError", error.message);
+  }
+}
+
 function renderRoom() {
   if (!state.room) return;
   $("#roomTitle").textContent = state.room.name;
@@ -170,10 +215,31 @@ function renderRoom() {
   for (const message of state.room.messages) {
     const node = template.content.cloneNode(true);
     const article = node.querySelector(".message");
-    if (message.author.id === state.user.id) article.classList.add("mine");
+    const mine = message.author.id === state.user.id;
+    if (mine) article.classList.add("mine");
     node.querySelector(".speaker-name").textContent = message.author.displayName;
     node.querySelector("time").textContent = new Date(message.committedAt).toLocaleString();
     node.querySelector(".statement").textContent = message.statement;
+
+    const actions = node.querySelector(".message-actions");
+    const publication = federationPublication(message.id);
+    if (publication) {
+      const link = document.createElement("a");
+      link.className = "federation-link";
+      link.href = publication.canonicalUri;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Federated · signed URI ↗";
+      actions.append(link);
+    } else if (mine && state.federation.enabled) {
+      const button = document.createElement("button");
+      button.className = "ghost small";
+      button.textContent = "Publish to federation";
+      button.addEventListener("click", () => publishToFederation(message.id));
+      actions.append(button);
+    } else {
+      actions.classList.add("hidden");
+    }
     root.append(node);
   }
   root.scrollTop = root.scrollHeight;
@@ -227,6 +293,7 @@ async function refreshMe() {
 async function enterLobby() {
   closeEvents();
   state.room = null;
+  state.federation.publications = [];
   await refreshMe();
   renderRooms();
   show("lobbyView");
@@ -241,6 +308,7 @@ async function openRoom(code, { updateUrl = true } = {}) {
     state.room = data.room;
     if (updateUrl) setRoomUrl(state.room.code);
     resetPrivateWorkspace();
+    await refreshFederation();
     renderRoom();
     show("roomView");
     connectEvents();
@@ -300,9 +368,12 @@ async function commit() {
 async function init() {
   try {
     const health = await api("/api/health");
+    state.federation.enabled = Boolean(health.federation?.enabled);
+    state.federation.issuer = health.federation?.issuer || null;
+    const federationMark = state.federation.enabled ? " · FEDERATION" : "";
     $("#modeBadge").textContent = health.mode === "openai"
-      ? `v${health.version} · protocol ${health.protocolVersion} · AI`
-      : `v${health.version} · protocol ${health.protocolVersion} · DEMO`;
+      ? `v${health.version} · protocol ${health.protocolVersion} · AI${federationMark}`
+      : `v${health.version} · protocol ${health.protocolVersion} · DEMO${federationMark}`;
   } catch {
     $("#modeBadge").textContent = "offline";
   }
@@ -371,6 +442,7 @@ $("#logoutBtn").addEventListener("click", async () => {
   state.user = null;
   state.rooms = [];
   state.room = null;
+  state.federation.publications = [];
   renderUser();
   show("authView");
 });
@@ -386,6 +458,7 @@ $("#createRoomForm").addEventListener("submit", async (event) => {
     renderRooms();
     state.room = data.room;
     setRoomUrl(data.room.code);
+    await refreshFederation();
     renderRoom();
     show("roomView");
     connectEvents();
@@ -405,6 +478,7 @@ $("#joinRoomForm").addEventListener("submit", async (event) => {
     renderRooms();
     state.room = data.room;
     setRoomUrl(data.room.code);
+    await refreshFederation();
     renderRoom();
     show("roomView");
     connectEvents();
