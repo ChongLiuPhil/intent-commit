@@ -1,0 +1,7 @@
+{
+  "name": "@intent-commit/federation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Verifiable federation primitives for Intent Commit committed utterances."
+}
