@@ -96,13 +96,69 @@ function renderRooms() {
   }
 }
 
+function memberActions(participant) {
+  if (!state.room || participant.id === state.user.id) return "";
+  const actorRole = state.room.membership.role;
+  const userId = escapeHtml(participant.id);
+  const controls = [];
+  if (actorRole === "owner" && participant.role !== "owner") {
+    const nextRole = participant.role === "moderator" ? "member" : "moderator";
+    controls.push(`<button class="ghost small" data-member-action="role" data-user-id="${userId}" data-role="${nextRole}">${nextRole === "moderator" ? "Promote" : "Demote"}</button>`);
+    controls.push(`<button class="ghost small" data-member-action="transfer" data-user-id="${userId}">Make owner</button>`);
+    controls.push(`<button class="ghost small" data-member-action="remove" data-user-id="${userId}">Remove</button>`);
+  } else if (actorRole === "moderator" && participant.role === "member") {
+    controls.push(`<button class="ghost small" data-member-action="remove" data-user-id="${userId}">Remove</button>`);
+  }
+  return controls.length ? `<span class="member-actions">${controls.join("")}</span>` : "";
+}
+
+async function runMemberAction(button) {
+  if (!state.room) return;
+  const userId = button.dataset.userId;
+  const participant = state.room.participants.find((p) => p.id === userId);
+  if (!participant) return;
+  errorAt("roomError");
+  try {
+    if (button.dataset.memberAction === "role") {
+      const role = button.dataset.role;
+      const data = await api(`/api/rooms/${state.room.code}/members/${encodeURIComponent(userId)}/role`, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      });
+      state.room = data.room;
+      renderRoom();
+      return;
+    }
+    if (button.dataset.memberAction === "transfer") {
+      if (!confirm(`Transfer room ownership to ${participant.displayName}? You will become a regular member.`)) return;
+      const data = await api(`/api/rooms/${state.room.code}/ownership`, {
+        method: "POST",
+        body: JSON.stringify({ targetUserId: userId }),
+      });
+      state.room = data.room;
+      await refreshMe();
+      renderRoom();
+      return;
+    }
+    if (button.dataset.memberAction === "remove") {
+      if (!confirm(`Remove ${participant.displayName} from this room?`)) return;
+      const data = await api(`/api/rooms/${state.room.code}/members/${encodeURIComponent(userId)}`, { method: "DELETE" });
+      state.room = data.room;
+      renderRoom();
+    }
+  } catch (error) {
+    errorAt("roomError", error.message);
+  }
+}
+
 function renderRoom() {
   if (!state.room) return;
   $("#roomTitle").textContent = state.room.name;
-  $("#roomCodeBadge").textContent = state.room.code;
+  $("#roomCodeBadge").textContent = `${state.room.code} · ${state.room.membership.role}`;
   $("#memberList").innerHTML = state.room.participants
-    .map((p) => `<span class="member"><strong>${escapeHtml(p.displayName)}</strong>${p.role === "owner" ? " · owner" : ""}</span>`)
+    .map((p) => `<span class="member"><span><strong>${escapeHtml(p.displayName)}</strong> · ${escapeHtml(p.role)}</span>${memberActions(p)}</span>`)
     .join("");
+  $$('[data-member-action]').forEach((button) => button.addEventListener("click", () => runMemberAction(button)));
 
   const root = $("#conversation");
   root.innerHTML = "";
@@ -145,6 +201,9 @@ function connectEvents() {
   events.addEventListener("snapshot", (event) => {
     state.room = JSON.parse(event.data);
     renderRoom();
+  });
+  events.addEventListener("error", () => {
+    if (events.readyState === EventSource.CLOSED) errorAt("roomError", "Live room connection closed. You may no longer be a member of this room.");
   });
   state.events = events;
 }
@@ -241,7 +300,9 @@ async function commit() {
 async function init() {
   try {
     const health = await api("/api/health");
-    $("#modeBadge").textContent = health.mode === "openai" ? `AI · ${health.model}` : `v${health.version} · SQLITE · DEMO`;
+    $("#modeBadge").textContent = health.mode === "openai"
+      ? `v${health.version} · protocol ${health.protocolVersion} · AI`
+      : `v${health.version} · protocol ${health.protocolVersion} · DEMO`;
   } catch {
     $("#modeBadge").textContent = "offline";
   }
