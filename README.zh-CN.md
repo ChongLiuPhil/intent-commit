@@ -6,22 +6,24 @@ Intent Commit 是一个面向 **AI 中介的反思式人类交流** 的开放协
 
 > 私人草稿 → AI 反思 → 本人澄清 → 本人确认 → Commit → 公共交流
 
-## v0.4：协议层 + 房间治理 + 可部署结构
+## v0.5：第一个真正的外部 Adapter
 
-v0.4 不再只是一个具体聊天客户端，而开始形成“开放协议 + 参考实现”的结构：
+v0.5 开始验证一个关键问题：Intent Commit Protocol 能否离开自己的网页客户端，进入别的交流平台，同时仍然保留“由人确认并承担发言责任”的原则。
 
-- 新增独立的 `packages/protocol` 协议模块；
-- 协议版本 `1.0`；
-- 消息状态迁移变成可执行、可测试的代码；
-- Intent Card 和 committed message 都有 JSON Schema；
-- 为外部 adapter 提供标准 committed-message envelope；
-- room 角色扩展为 `owner / moderator / member`；
-- Owner 可以任命或撤销 Moderator；
-- 支持 ownership transfer；
-- Moderator 只能移除普通 member，不能管理 owner 或其他 moderator；
-- 加入 Docker 与 Docker Compose 部署结构；
-- SQLite 继续持久化账户、room、membership、role、session 与 committed history；
-- reference client 继续通过 SSE 实时同步公共 room state。
+第一版外部 adapter 支持把一个已经 `COMMITTED` 的消息发布为 GitHub Issue / Pull Request 的 conversation comment。
+
+核心约束：
+
+- 只有符合协议的 `COMMITTED` message 才能进入 adapter；
+- 在 room 中 Commit **不等于** 同意向更大的外部受众公开；
+- 原消息作者必须再次明确确认 external publication；
+- Owner / Moderator 不能替别人把消息发布到 GitHub；
+- GitHub token 只保存在服务端；
+- 成功发布后会把目标、message id、外部 URL 和时间写入 SQLite 审计记录；
+- 同一消息向同一目标重复发布会被拒绝；
+- raw draft、clarification 和 Intent Card 永远不会进入 adapter。
+
+仓库中的 Issue `#1` 已保留为后续端到端 dogfooding 测试目标。
 
 ## 最重要的协议约束
 
@@ -35,15 +37,13 @@ DRAFT → REFLECTED ↔ CLARIFYING → APPROVED → COMMITTED
 DRAFT → COMMITTED
 ```
 
-Reflective Agent 的核心约束仍然是：
+Reflective Agent 的核心原则仍然是：
 
 > **Expand without inventing —— 可以展开，但不能擅自替用户创造理由、事实、立场或承诺。**
 
-如果信息缺失，Agent 应当暴露不确定性或提出问题，而不是偷偷替表达者补完立场。
-
 ## 独立 Protocol Package
 
-可复用的协议实现位于：
+协议实现位于：
 
 ```text
 packages/protocol/
@@ -53,33 +53,92 @@ packages/protocol/
 
 - 状态迁移规则；
 - room role 权限规则；
-- Intent Card normalization / validation；
+- Intent Card validation；
 - committed-message envelope 创建与验证。
 
-JSON Schema：
-
-- `packages/protocol/schemas/intent-card.schema.json`
-- `packages/protocol/schemas/committed-message.schema.json`
-
-参考服务端还提供一个给 adapter 使用的标准协议出口：
+标准协议出口：
 
 ```text
 GET /api/rooms/:code/protocol/messages
 ```
 
-详情见 `docs/protocol-package.md`。
+## GitHub Issues Adapter
+
+可复用 adapter 包：
+
+```text
+packages/adapters-github/
+```
+
+服务端配置：
+
+```env
+GITHUB_TOKEN=...
+```
+
+Token 不会发送给浏览器，也不应提交到 Git。
+
+发布接口：
+
+```text
+POST /api/rooms/:code/adapters/github/issues/:issueNumber/publish
+```
+
+请求体：
+
+```json
+{
+  "repository": "owner/repo",
+  "messageId": "committed-message-id",
+  "approved": true
+}
+```
+
+外部发布审计：
+
+```text
+GET /api/rooms/:code/exports
+```
+
+详情见：
+
+- `docs/adapters/github-issues.md`
+- `docs/adapters/consent-model.md`
+- `docs/adapters/security.md`
+
+## 为什么外部发布需要第二次确认
+
+Intent Commit 现在明确区分两种 commitment：
+
+```text
+Room Commit
+```
+
+表示：
+
+> 我愿意让这句话在当前 room 中代表我。
+
+而：
+
+```text
+External Publication Approval
+```
+
+表示：
+
+> 我愿意让这条已经确认过的表达进入一个新的外部受众环境。
+
+因为受众改变会改变一句话的实际语用后果，所以第二步不能由系统、Moderator 或 Owner 自动推断。
 
 ## Room Governance
 
-角色权限刻意保持简单：
+角色保持简单：
 
-- **owner**：可以任命/撤销 moderator、移除非 owner 成员、转移 ownership；
+- **owner**：可任命/撤销 moderator、移除非 owner 成员、转移 ownership；
 - **moderator**：只能移除普通 member；
-- **member**：可以参与讨论，但没有 moderation 权限。
+- **member**：参与讨论，没有治理权限。
 
-如果房间还有其他成员，Owner 不能直接离开，必须先转移 ownership。
-
-这些治理动作只作用于公共 room membership，不允许读取或修改其他人的私人 draft、clarification 或 Intent Card。
+治理权仍然不能读取或修改别人的私人反思空间。
 
 ## 本地运行
 
@@ -92,15 +151,13 @@ npm start
 
 打开：`http://localhost:3000`
 
-首次启动会自动创建：
+首次启动自动创建：
 
 ```text
 data/intent-commit.sqlite
 ```
 
-`data/` 已加入 `.gitignore`。
-
-不配置 API Key 时使用 deterministic demo reflector。若要使用 OpenAI：
+可选配置：
 
 ```env
 OPENAI_API_KEY=...
@@ -108,25 +165,24 @@ OPENAI_MODEL=gpt-5.6-luna
 DATABASE_PATH=./data/intent-commit.sqlite
 SESSION_TTL_DAYS=30
 COOKIE_SECURE=false
+GITHUB_TOKEN=
 ```
 
-正式 HTTPS 部署时应设置：
+正式 HTTPS 部署应设置：
 
 ```text
 COOKIE_SECURE=true
 ```
 
-## Docker 部署
+## Docker
 
 ```bash
 docker compose up --build
 ```
 
-SQLite 数据保存在 `intent_commit_data` volume 中。生产 `Dockerfile` 默认把数据库放在 `/app/data`，并默认启用 secure cookie。
+SQLite 数据保存在 `intent_commit_data` volume 中。
 
-详情见 `docs/deployment.md`。
-
-## API
+## API 概览
 
 认证：
 
@@ -150,9 +206,11 @@ Room：
 - `DELETE /api/rooms/:code/members/:userId`
 - `POST /api/rooms/:code/ownership`
 
-协议 adapter：
+协议与 Adapter：
 
 - `GET /api/rooms/:code/protocol/messages`
+- `POST /api/rooms/:code/adapters/github/issues/:issueNumber/publish`
+- `GET /api/rooms/:code/exports`
 
 私人反思：
 
@@ -160,23 +218,11 @@ Room：
 
 ## 数据与隐私边界
 
-SQLite 中保存：
+SQLite 保存：账户、密码 hash、session hash、room、membership、role、committed statement，以及成功的 external publication audit records。
 
-- 用户账户；
-- 密码 salt / hash；
-- 哈希后的 session token；
-- room；
-- room membership 与 role；
-- 最终 committed statement。
+不会作为 room discourse 保存：raw draft、clarification、Intent Card、尚未确认的 proposed statement。
 
-不会作为 room 公共历史保存：
-
-- raw draft；
-- clarification；
-- Intent Card；
-- 尚未确认的 proposed statement。
-
-如果启用了外部 LLM，那么私人草稿与澄清会由模型提供商处理，但这仍然不同于把它们发布给 room 中的其他参与者。
+外部发布本身也被设计成一个独立 consent event，而不是 room Commit 的自动延伸。
 
 ## 测试
 
@@ -190,25 +236,16 @@ npm test
 - `DRAFT → COMMITTED` 禁止规则；
 - committed-message interoperability；
 - 密码哈希与 session 撤销；
-- account-based membership；
+- room membership 与治理权限；
 - explicit approval；
-- Moderator 权限边界；
-- ownership transfer；
-- SQLite 重启后的持久化恢复。
+- SQLite persistence；
+- GitHub adapter comment formatting 与 REST request 构造；
+- external publication audit；
+- 同一 message / target 的重复发布保护。
 
 ## 当前边界
 
-v0.4 已经可以部署，但还不是面向不受信任公众的大规模生产平台。目前仍缺少密码找回、rate limiting、moderation audit log、更完整的 CSRF 防护、多进程 realtime fan-out，以及正式数据库 migration tooling。
-
-更多说明：
-
-- `docs/protocol-package.md`
-- `docs/deployment.md`
-- `docs/persistence.md`
-- `docs/privacy.md`
-- `docs/multi-user.md`
-- `docs/protocol.md`
-- `docs/philosophy.md`
+v0.5 仍然是 reference implementation。GitHub bridge 当前只支持 outbound，并要求服务端配置 token。暂时还没有 inbound webhook federation、per-room provider credential、password recovery、rate limiting、正式 database migration、以及多进程 realtime fan-out。
 
 ## License
 
