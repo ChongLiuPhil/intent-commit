@@ -44,9 +44,12 @@ button.primary, button.secondary, button.commit, button.ghost { border-radius: 8
 .composer-panel { border-left: 1px solid #d9d6cf; padding: 28px; background: #fbfaf7; overflow-y: auto; max-height: calc(100vh - 76px); position: sticky; top: 76px; }
 .section-head { display: flex; justify-content: space-between; align-items: start; gap: 24px; margin-bottom: 24px; }
 .room-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; align-items: center; }
-.members-box { min-width: 190px; border: 1px solid #d7d3ca; background: #fff; padding: 12px; }
-.member-list { display: grid; gap: 5px; margin-top: 8px; }
-.member { font-size: 12px; color: #625f58; }
+.members-box { min-width: 250px; border: 1px solid #d7d3ca; background: #fff; padding: 12px; }
+.member-list { display: grid; gap: 8px; margin-top: 8px; }
+.member { font-size: 12px; color: #625f58; display: flex; gap: 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid #eeeae2; }
+.member:first-child { border-top: 0; padding-top: 0; }
+.member-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.member-actions .small { padding: 4px 7px !important; font-size: 10px; }
 .conversation { display: flex; flex-direction: column; gap: 16px; max-width: 900px; }
 .empty-state { border: 1px dashed #bbb7ae; padding: 28px; background: rgba(255,255,255,.45); }
 .empty-state p { color: #6a6862; margin-bottom: 0; }
