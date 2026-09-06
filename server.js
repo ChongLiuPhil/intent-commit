@@ -4,12 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { demoReflect } from "./src/reflector.js";
 import { reflectWithOpenAI } from "./src/openai.js";
-import { createRoomStore } from "./src/rooms.js";
+import { createPersistentStore } from "./src/store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
-const rooms = createRoomStore();
-const subscribers = new Map();
 
 async function loadLocalEnv() {
   try {
@@ -21,9 +19,7 @@ async function loadLocalEnv() {
       if (index < 1) continue;
       const key = line.slice(0, index).trim();
       let value = line.slice(index + 1).trim();
-      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
       if (!(key in process.env)) process.env[key] = value;
     }
   } catch (error) {
@@ -32,7 +28,13 @@ async function loadLocalEnv() {
 }
 
 await loadLocalEnv();
+
 const port = Number(process.env.PORT || 3000);
+const sessionTtlDays = Math.max(1, Number(process.env.SESSION_TTL_DAYS || 30));
+const cookieSecure = String(process.env.COOKIE_SECURE || "false").toLowerCase() === "true";
+const databasePath = process.env.DATABASE_PATH || path.join(__dirname, "data", "intent-commit.sqlite");
+const store = createPersistentStore({ dbPath: databasePath, sessionTtlDays });
+const subscribers = new Map();
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -42,18 +44,9 @@ const MIME = {
   ".svg": "image/svg+xml",
 };
 
-function sendJson(res, status, payload) {
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-  });
+function sendJson(res, status, payload, headers = {}) {
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers });
   res.end(JSON.stringify(payload));
-}
-
-function sendApiError(res, error) {
-  const message = error?.message || "Request failed.";
-  const status = /not found/i.test(message) ? 404 : /invalid|required|too long|approval/i.test(message) ? 400 : 500;
-  sendJson(res, status, { error: message });
 }
 
 async function readJson(req) {
@@ -67,74 +60,82 @@ async function readJson(req) {
   return JSON.parse(Buffer.concat(parts).toString("utf8") || "{}");
 }
 
-function sendEvent(res, event, payload) {
-  res.write(`event: ${event}\n`);
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+function parseCookies(req) {
+  const cookies = {};
+  for (const pair of String(req.headers.cookie || "").split(";")) {
+    const index = pair.indexOf("=");
+    if (index < 1) continue;
+    cookies[pair.slice(0, index).trim()] = decodeURIComponent(pair.slice(index + 1).trim());
+  }
+  return cookies;
 }
 
-function broadcastSnapshot(roomCode) {
-  const group = subscribers.get(roomCode);
-  if (!group?.size) return;
+function sessionToken(req) {
+  return parseCookies(req).intent_commit_session || "";
+}
 
-  for (const client of [...group]) {
+function sessionCookie(token, expiresAt) {
+  const maxAge = Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
+  return [
+    `intent_commit_session=${encodeURIComponent(token)}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/",
+    `Max-Age=${maxAge}`,
+    cookieSecure ? "Secure" : "",
+  ].filter(Boolean).join("; ");
+}
+
+function clearSessionCookie() {
+  return ["intent_commit_session=", "HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=0", cookieSecure ? "Secure" : ""].filter(Boolean).join("; ");
+}
+
+function requireAuth(req) {
+  return store.authenticate(sessionToken(req)).user;
+}
+
+function statusFor(error) {
+  const message = String(error?.message || "");
+  if (/Authentication required|Invalid room session/i.test(message)) return 401;
+  if (/not a member/i.test(message)) return 403;
+  if (/not found/i.test(message)) return 404;
+  if (/already registered/i.test(message)) return 409;
+  return 400;
+}
+
+function sseWrite(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function broadcastRoom(code) {
+  const set = subscribers.get(code);
+  if (!set) return;
+  for (const client of [...set]) {
     try {
-      const snapshot = rooms.getSnapshot(roomCode, client.participantToken);
-      sendEvent(client.res, "snapshot", snapshot);
+      sseWrite(client.res, "snapshot", store.roomSnapshot(code, client.userId));
     } catch {
-      group.delete(client);
+      set.delete(client);
       client.res.end();
     }
   }
-
-  if (!group.size) subscribers.delete(roomCode);
-}
-
-function subscribeToRoom(req, res, roomCode, participantToken) {
-  rooms.authenticate(roomCode, participantToken);
-
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-  res.write("retry: 2000\n\n");
-
-  const client = { res, participantToken };
-  const group = subscribers.get(roomCode) || new Set();
-  group.add(client);
-  subscribers.set(roomCode, group);
-
-  sendEvent(res, "snapshot", rooms.getSnapshot(roomCode, participantToken));
-  const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 20_000);
-
-  req.on("close", () => {
-    clearInterval(heartbeat);
-    group.delete(client);
-    if (!group.size) subscribers.delete(roomCode);
-  });
+  if (!set.size) subscribers.delete(code);
 }
 
 async function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   let pathname = decodeURIComponent(url.pathname);
   if (pathname === "/") pathname = "/index.html";
-
   const candidate = path.normalize(path.join(publicDir, pathname));
   if (!candidate.startsWith(publicDir)) {
     res.writeHead(403);
     return res.end("Forbidden");
   }
-
   try {
     const info = await stat(candidate);
     if (!info.isFile()) throw new Error("Not a file");
     const body = await readFile(candidate);
-    res.writeHead(200, {
-      "Content-Type": MIME[path.extname(candidate)] || "application/octet-stream",
-      "Cache-Control": "no-cache",
-    });
-    if (req.method === "HEAD") return res.end();
+    res.writeHead(200, { "Content-Type": MIME[path.extname(candidate)] || "application/octet-stream", "Cache-Control": "no-cache" });
     res.end(body);
   } catch {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -149,113 +150,170 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && pathname === "/api/health") {
     return sendJson(res, 200, {
       ok: true,
-      version: "0.2.0",
-      realtime: "sse",
-      storage: "memory",
+      version: "0.3.0",
+      persistence: "sqlite",
       mode: process.env.OPENAI_API_KEY ? "openai" : "demo",
       model: process.env.OPENAI_API_KEY ? (process.env.OPENAI_MODEL || "gpt-5.6-luna") : null,
     });
   }
 
-  if (req.method === "POST" && pathname === "/api/rooms") {
+  if (req.method === "POST" && pathname === "/api/register") {
     try {
       const body = await readJson(req);
-      const result = rooms.createRoom({ displayName: body.displayName, roomName: body.roomName });
-      return sendJson(res, 201, result);
+      const result = store.register(body);
+      return sendJson(res, 201, { user: result.user, rooms: [] }, { "Set-Cookie": sessionCookie(result.session.token, result.session.expiresAt) });
     } catch (error) {
-      return sendApiError(res, error);
+      return sendJson(res, statusFor(error), { error: error.message });
     }
   }
 
-  const roomMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)(?:\/(join|commit|leave|events))?$/);
-  if (roomMatch) {
-    const roomCode = roomMatch[1].toUpperCase();
-    const action = roomMatch[2] || "snapshot";
-
+  if (req.method === "POST" && pathname === "/api/login") {
     try {
-      if (req.method === "POST" && action === "join") {
-        const body = await readJson(req);
-        const result = rooms.joinRoom({ code: roomCode, displayName: body.displayName });
-        sendJson(res, 200, result);
-        broadcastSnapshot(roomCode);
-        return;
-      }
-
-      if (req.method === "GET" && action === "snapshot") {
-        const token = url.searchParams.get("token");
-        return sendJson(res, 200, { room: rooms.getSnapshot(roomCode, token) });
-      }
-
-      if (req.method === "GET" && action === "events") {
-        const token = url.searchParams.get("token");
-        return subscribeToRoom(req, res, roomCode, token);
-      }
-
-      if (req.method === "POST" && action === "commit") {
-        const body = await readJson(req);
-        const message = rooms.commitMessage({
-          code: roomCode,
-          participantToken: body.participantToken,
-          statement: body.statement,
-          approved: body.approved,
-        });
-        sendJson(res, 201, { message });
-        broadcastSnapshot(roomCode);
-        return;
-      }
-
-      if (req.method === "POST" && action === "leave") {
-        const body = await readJson(req);
-        rooms.leaveRoom({ code: roomCode, participantToken: body.participantToken });
-        sendJson(res, 200, { ok: true });
-        broadcastSnapshot(roomCode);
-        return;
-      }
+      const body = await readJson(req);
+      const result = store.login(body);
+      return sendJson(res, 200, { user: result.user, rooms: store.listRoomsForUser(result.user.id) }, { "Set-Cookie": sessionCookie(result.session.token, result.session.expiresAt) });
     } catch (error) {
-      return sendApiError(res, error);
+      return sendJson(res, 401, { error: error.message });
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/logout") {
+    store.logout(sessionToken(req));
+    return sendJson(res, 200, { ok: true }, { "Set-Cookie": clearSessionCookie() });
+  }
+
+  if (req.method === "GET" && pathname === "/api/me") {
+    try {
+      const user = requireAuth(req);
+      return sendJson(res, 200, { user, rooms: store.listRoomsForUser(user.id) });
+    } catch (error) {
+      return sendJson(res, 401, { error: error.message });
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/rooms") {
+    try {
+      const user = requireAuth(req);
+      const body = await readJson(req);
+      const room = store.createRoom({ userId: user.id, roomName: body.roomName });
+      broadcastRoom(room.code);
+      return sendJson(res, 201, { room });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const joinMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/join$/);
+  if (req.method === "POST" && joinMatch) {
+    try {
+      const user = requireAuth(req);
+      const room = store.joinRoom({ code: joinMatch[1], userId: user.id });
+      broadcastRoom(room.code);
+      return sendJson(res, 200, { room });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const roomMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)$/);
+  if (req.method === "GET" && roomMatch) {
+    try {
+      const user = requireAuth(req);
+      return sendJson(res, 200, { room: store.roomSnapshot(roomMatch[1], user.id) });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const eventMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/events$/);
+  if (req.method === "GET" && eventMatch) {
+    try {
+      const user = requireAuth(req);
+      const room = store.roomSnapshot(eventMatch[1], user.id);
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      res.write("retry: 3000\n\n");
+      sseWrite(res, "snapshot", room);
+      const client = { res, userId: user.id };
+      const set = subscribers.get(room.code) || new Set();
+      set.add(client);
+      subscribers.set(room.code, set);
+      const keepAlive = setInterval(() => res.write(": keepalive\n\n"), 25_000);
+      req.on("close", () => {
+        clearInterval(keepAlive);
+        set.delete(client);
+        if (!set.size) subscribers.delete(room.code);
+      });
+      return;
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const commitMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/commit$/);
+  if (req.method === "POST" && commitMatch) {
+    try {
+      const user = requireAuth(req);
+      const body = await readJson(req);
+      const message = store.commitMessage({ code: commitMatch[1], userId: user.id, statement: body.statement, approved: body.approved });
+      broadcastRoom(message.roomCode);
+      return sendJson(res, 201, { message });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const leaveMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/leave$/);
+  if (req.method === "POST" && leaveMatch) {
+    try {
+      const user = requireAuth(req);
+      const result = store.leaveRoom({ code: leaveMatch[1], userId: user.id });
+      broadcastRoom(result.code);
+      return sendJson(res, 200, { ok: true });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
     }
   }
 
   if (req.method === "POST" && pathname === "/api/reflect") {
     try {
+      const user = requireAuth(req);
       const body = await readJson(req);
       const draft = String(body.draft || "").trim();
       const clarification = String(body.clarification || "").trim();
       const roomCode = String(body.roomCode || "").trim().toUpperCase();
-      const participantToken = String(body.participantToken || "").trim();
-
       if (!draft) return sendJson(res, 400, { error: "Draft is required." });
-      if (draft.length > 20_000 || clarification.length > 10_000) {
-        return sendJson(res, 400, { error: "Draft or clarification is too long for this MVP." });
-      }
-
-      let history = [];
-      if (roomCode || participantToken) {
-        const snapshot = rooms.getSnapshot(roomCode, participantToken);
-        history = snapshot.messages;
-      }
-
+      if (draft.length > 20_000 || clarification.length > 10_000) return sendJson(res, 400, { error: "Draft or clarification is too long." });
+      const history = roomCode ? store.publicHistory(roomCode, user.id, 8) : [];
       if (process.env.OPENAI_API_KEY) {
         const card = await reflectWithOpenAI({ draft, clarification, history });
         return sendJson(res, 200, { mode: "openai", card });
       }
-
       return sendJson(res, 200, { mode: "demo", card: demoReflect({ draft, clarification }) });
     } catch (error) {
-      return sendApiError(res, error);
+      return sendJson(res, statusFor(error), { error: error?.message || "Reflection failed." });
     }
   }
 
-  if (req.method === "GET" || req.method === "HEAD") {
-    return serveStatic(req, res);
-  }
-
+  if (req.method === "GET" || req.method === "HEAD") return serveStatic(req, res);
   res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("Method not allowed");
 });
 
 server.listen(port, () => {
-  console.log(`Intent Commit v0.2 running at http://localhost:${port}`);
-  console.log("Multi-user rooms: enabled (in-memory + Server-Sent Events)");
+  console.log(`Intent Commit v0.3 running at http://localhost:${port}`);
+  console.log(`SQLite: ${databasePath}`);
   console.log(process.env.OPENAI_API_KEY ? "Reflection mode: OpenAI" : "Reflection mode: deterministic demo");
 });
+
+function shutdown() {
+  for (const set of subscribers.values()) for (const client of set) client.res.end();
+  store.close();
+  server.close(() => process.exit(0));
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
