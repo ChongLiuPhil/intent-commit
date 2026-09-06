@@ -2,150 +2,94 @@
 
 **Think before you commit.**
 
-Intent Commit is an open-source reflective communication protocol and reference client. AI does not speak on behalf of a human. Instead, it helps the speaker inspect, clarify, and explicitly approve what they are willing to mean before that statement becomes public.
+Intent Commit is an open-source reflective communication protocol and reference client. AI does not speak on behalf of a human. It helps the speaker inspect, clarify and explicitly approve what they are willing to mean before that statement becomes public.
 
-> Draft privately → Reflect → Clarify → Approve → Commit → Share
+> Private draft → Reflect → Clarify → Approve → Commit → Share
 
-## v0.2: real multi-user rooms
+[简体中文 README](README.zh-CN.md)
 
-The reference client now supports multiple people using separate browsers or devices:
+## v0.3: persistent multi-user conversations
 
-- create a room and share its room code / invite link;
-- each participant receives an independent private room session;
-- each participant has a private reflective workspace;
-- only speaker-approved statements are stored in the room conversation;
-- committed messages are synchronized live with Server-Sent Events (SSE);
-- the public timeline records the human author of each committed statement;
-- room histories are isolated from one another.
+v0.3 turns the room prototype into a persistent account-based service:
 
-### Important v0.2 limitation
+- username/password accounts;
+- passwords hashed with `scrypt` and random salts;
+- revocable server-side sessions delivered in HttpOnly cookies;
+- SQLite persistence using Node's built-in `node:sqlite`;
+- durable rooms, memberships and committed history across restarts;
+- a "Your rooms" lobby after login;
+- live SSE synchronization for committed room state;
+- private drafts remain outside the public room database;
+- the server still refuses a commit unless explicit speaker approval is supplied.
 
-Rooms, participants, and committed messages are currently stored **in server memory only**. Restarting the Node process clears active rooms. This is intentional for the first multi-user MVP; persistent storage and authentication belong in a later release.
+## Core invariant
 
-## Why this exists
+A conforming client must not treat a raw draft as public speech:
 
-Ordinary chat software makes sending nearly frictionless:
+```text
+DRAFT → REFLECTED ↔ CLARIFYING → APPROVED → COMMITTED
+```
 
-`raw input → public message`
-
-Intent Commit inserts a reflective layer:
-
-`raw input → AI interpretation → speaker clarification → speaker approval → committed message`
-
-The AI is a **Reflective Agent**, not a ghostwriter. Its core rule is:
+The Reflective Agent follows one central rule:
 
 > **Expand without inventing.**
 
-If a reason, assumption, intention, or scope is missing, the agent should surface the uncertainty or ask a question rather than silently authoring a stronger position.
+Missing reasons, assumptions or intentions should be surfaced as uncertainty or questions, not silently authored by the model.
 
 ## Run locally
 
-Requirements: Node.js 20+
+Requires Node.js **22.13+**.
 
 ```bash
+cp .env.example .env
 npm start
 ```
 
 Open `http://localhost:3000`.
 
-Without an API key, Intent Commit uses a deterministic demo reflector. To use OpenAI:
+The first start creates `data/intent-commit.sqlite`. The `data/` directory is gitignored.
 
-```bash
-cp .env.example .env
-```
-
-Then set:
+Without an API key, the project uses a deterministic demo reflector. To enable OpenAI, configure the server-side environment:
 
 ```env
 OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.6-luna
+DATABASE_PATH=./data/intent-commit.sqlite
+SESSION_TTL_DAYS=30
+COOKIE_SECURE=false
 ```
 
-The Responses API is used for reflection. Private drafts are sent to the configured server-side model provider when AI mode is enabled, but they are not broadcast to room participants.
+For an HTTPS deployment, set `COOKIE_SECURE=true`.
 
-## Multi-user flow
+## v0.3 API
 
-1. Alice creates a room and sends Bob the invite link.
-2. Alice drafts a statement privately.
-3. Alice's Reflective Agent produces an Intent Card.
-4. Alice corrects or clarifies the interpretation.
-5. Alice approves the final statement and selects **Commit & Send**.
-6. Only that approved statement enters the room timeline.
-7. Bob receives it live, then goes through the same private reflection process before replying.
+Authentication:
 
-## API surface in v0.2
+- `POST /api/register`
+- `POST /api/login`
+- `POST /api/logout`
+- `GET /api/me`
 
-- `POST /api/rooms` — create room and creator session
-- `POST /api/rooms/:code/join` — join room
-- `GET /api/rooms/:code?token=...` — fetch authenticated room snapshot
-- `GET /api/rooms/:code/events?token=...` — live SSE snapshots
-- `POST /api/rooms/:code/commit` — publish an explicitly approved statement
-- `POST /api/rooms/:code/leave` — invalidate a participant session
-- `POST /api/reflect` — privately reflect on the current speaker's draft
+Rooms:
 
-## Trust boundary
+- `POST /api/rooms`
+- `POST /api/rooms/:code/join`
+- `GET /api/rooms/:code`
+- `GET /api/rooms/:code/events`
+- `POST /api/rooms/:code/commit`
+- `POST /api/rooms/:code/leave`
 
-### Public to room participants
+Reflection:
 
-- display name
-- public participant id
-- committed statement
-- commit timestamp
+- `POST /api/reflect`
 
-### Private to the speaker workflow
+## Persistence boundary
 
-- raw draft
-- clarification text
-- Intent Card
-- session token
+Stored in SQLite: accounts, hashed sessions, rooms, memberships and committed statements.
 
-When an external model provider is enabled, raw drafts and clarifications are necessarily processed by that provider. See [`docs/privacy.md`](docs/privacy.md).
+Not stored as room discourse: raw drafts, clarification text, Intent Cards and unapproved reformulations. When an external LLM is enabled, private reflective inputs are processed by that provider.
 
-## Protocol states
-
-```text
-DRAFT
-  ↓
-REFLECTED
-  ↕
-CLARIFYING
-  ↓
-APPROVED
-  ↓
-COMMITTED
-```
-
-`DRAFT → COMMITTED` is deliberately forbidden by the interaction design and server commit API.
-
-## Project structure
-
-```text
-intent-commit/
-├── public/              # reference web client
-├── src/
-│   ├── reflector.js     # deterministic reflector + card normalization
-│   ├── openai.js        # OpenAI reflection adapter
-│   └── rooms.js         # multi-user room/session domain logic
-├── test/                # protocol and room tests
-├── docs/
-│   ├── philosophy.md
-│   ├── protocol.md
-│   ├── agent-spec.md
-│   ├── privacy.md
-│   └── multi-user.md
-└── server.js            # HTTP, room APIs and SSE transport
-```
-
-## Roadmap
-
-- durable database-backed room history;
-- account authentication and revocable sessions;
-- encrypted / privacy-preserving storage options;
-- WebSocket transport for richer presence and typing-state features;
-- room roles and moderation without exposing private drafts;
-- independently versioned Intent Commit protocol package;
-- adapters for forums, issue trackers, email and team chat;
-- user-controlled expression profiles without covert personality simulation.
+See [`docs/persistence.md`](docs/persistence.md), [`docs/privacy.md`](docs/privacy.md), and [`docs/multi-user.md`](docs/multi-user.md).
 
 ## Development
 
@@ -153,7 +97,23 @@ intent-commit/
 npm test
 ```
 
-The tests include a hard invariant: the server refuses to commit a statement unless explicit speaker approval is supplied.
+Tests cover password hashing, session revocation, account-based membership, explicit approval, and persistence across a database reopen.
+
+## Project structure
+
+```text
+public/              reference web client
+src/reflector.js     Intent Card normalization and demo reflector
+src/openai.js        OpenAI reflection adapter
+src/store.js         SQLite accounts, sessions, rooms and messages
+server.js            HTTP API, auth cookies and SSE transport
+test/                protocol and persistence tests
+docs/                philosophy, protocol, privacy and persistence notes
+```
+
+## Current limits
+
+v0.3 is a reference implementation rather than a production identity service. It does not yet include email verification, password reset, rate limiting, moderation roles, rich presence, encrypted-at-rest private storage, or horizontal multi-process SSE fan-out.
 
 ## License
 
