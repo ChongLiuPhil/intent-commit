@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { demoReflect } from "./src/reflector.js";
 import { reflectWithOpenAI } from "./src/openai.js";
 import { createPersistentStore } from "./src/store.js";
+import { createExternalPublicationStore } from "./src/external-publications.js";
 import { createCommittedMessage, PROTOCOL_VERSION } from "./packages/protocol/index.js";
+import { normalizeRepository, publishIssueComment } from "./packages/adapters-github/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -35,6 +37,7 @@ const sessionTtlDays = Math.max(1, Number(process.env.SESSION_TTL_DAYS || 30));
 const cookieSecure = String(process.env.COOKIE_SECURE || "false").toLowerCase() === "true";
 const databasePath = process.env.DATABASE_PATH || path.join(__dirname, "data", "intent-commit.sqlite");
 const store = createPersistentStore({ dbPath: databasePath, sessionTtlDays });
+const externalPublications = createExternalPublicationStore(store._db);
 const subscribers = new Map();
 
 const MIME = {
@@ -98,9 +101,9 @@ function requireAuth(req) {
 function statusFor(error) {
   const message = String(error?.message || "");
   if (/Authentication required|Invalid room session/i.test(message)) return 401;
-  if (/not a member|permission|only the room owner|owner must transfer/i.test(message)) return 403;
+  if (/not a member|permission|only the room owner|owner must transfer|original author/i.test(message)) return 403;
   if (/not found/i.test(message)) return 404;
-  if (/already registered/i.test(message)) return 409;
+  if (/already registered|already been published/i.test(message)) return 409;
   return 400;
 }
 
@@ -152,11 +155,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && pathname === "/api/health") {
     return sendJson(res, 200, {
       ok: true,
-      version: "0.4.0",
+      version: "0.5.0",
       protocolVersion: PROTOCOL_VERSION,
       persistence: "sqlite",
       mode: process.env.OPENAI_API_KEY ? "openai" : "demo",
       model: process.env.OPENAI_API_KEY ? (process.env.OPENAI_MODEL || "gpt-5.6-luna") : null,
+      adapters: { githubIssues: Boolean(process.env.GITHUB_TOKEN) },
     });
   }
 
@@ -274,6 +278,72 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  const exportsMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/exports$/);
+  if (req.method === "GET" && exportsMatch) {
+    try {
+      const user = requireAuth(req);
+      store.roomSnapshot(exportsMatch[1], user.id);
+      return sendJson(res, 200, { publications: externalPublications.list(exportsMatch[1]) });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
+  const githubPublishMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/adapters\/github\/issues\/(\d+)\/publish$/);
+  if (req.method === "POST" && githubPublishMatch) {
+    try {
+      const user = requireAuth(req);
+      if (!process.env.GITHUB_TOKEN) return sendJson(res, 503, { error: "GitHub adapter is not configured on this server." });
+      const body = await readJson(req);
+      if (body.approved !== true) return sendJson(res, 400, { error: "Explicit external-publication approval is required." });
+
+      const room = store.roomSnapshot(githubPublishMatch[1], user.id);
+      const messageId = String(body.messageId || "").trim();
+      const message = room.messages.find((item) => item.id === messageId);
+      if (!message) return sendJson(res, 404, { error: "Committed message not found." });
+      if (message.author.id !== user.id) return sendJson(res, 403, { error: "Only the original author may publish this committed message externally." });
+
+      const repository = normalizeRepository(body.repository);
+      const issueNumber = Number(githubPublishMatch[2]);
+      const target = `${repository}#${issueNumber}`;
+      const existing = externalPublications.get({ adapter: "github-issues", target, messageId });
+      if (existing) return sendJson(res, 409, { error: "This committed message has already been published to that target.", publication: existing });
+
+      const envelope = createCommittedMessage({
+        id: message.id,
+        roomCode: message.roomCode,
+        author: message.author,
+        statement: message.statement,
+        committedAt: message.committedAt,
+      });
+
+      let external;
+      try {
+        external = await publishIssueComment({
+          token: process.env.GITHUB_TOKEN,
+          repository,
+          issueNumber,
+          message: envelope,
+        });
+      } catch (error) {
+        return sendJson(res, 502, { error: error.message });
+      }
+
+      const publication = externalPublications.record({
+        roomCode: room.code,
+        messageId: message.id,
+        authorUserId: user.id,
+        adapter: "github-issues",
+        target,
+        externalId: external.id,
+        externalUrl: external.htmlUrl || external.apiUrl,
+      });
+      return sendJson(res, 201, { publication, external });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
   const roomMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)$/);
   if (req.method === "GET" && roomMatch) {
     try {
@@ -364,10 +434,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Intent Commit v0.4 running at http://localhost:${port}`);
+  console.log(`Intent Commit v0.5 running at http://localhost:${port}`);
   console.log(`Protocol: ${PROTOCOL_VERSION}`);
   console.log(`SQLite: ${databasePath}`);
   console.log(process.env.OPENAI_API_KEY ? "Reflection mode: OpenAI" : "Reflection mode: deterministic demo");
+  console.log(process.env.GITHUB_TOKEN ? "GitHub Issues adapter: enabled" : "GitHub Issues adapter: disabled");
 });
 
 function shutdown() {
