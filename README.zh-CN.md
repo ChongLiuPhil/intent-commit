@@ -6,41 +6,56 @@ Intent Commit 是一个面向 **AI 中介的反思式人类交流** 的开放协
 
 > 私人草稿 → AI 反思 → 本人澄清 → 本人确认 → Commit → 公共交流
 
-## v0.6：可验证 Federation
+## v0.7：签名撤回与修订
 
-v0.6 开始建立 **由作者控制、并且可以用密码学验证的 federation**。
+v0.7 解决的是一个更接近项目核心的问题：**一个人已经公开承诺过一句话，后来改变了立场，系统应当如何表示这种变化？**
 
-一个 room 中已经 `COMMITTED` 的消息，并不会自动变成全网公开对象。只有原作者再次明确确认之后，服务器才会生成公开 canonical URI 与数字签名：
+Intent Commit 不会偷偷修改旧记录。已经 federate 的 utterance 仍然保持为不可变、可验签的历史对象。原作者之后可以再发布一个新的签名关系事件：
 
 ```text
-Room 中 COMMITTED
+Federated utterance U1
         ↓
-原作者明确同意 federation publication
-        ↓
-公开、带签名的 canonical utterance
+        ├── RETRACTION(U1)
+        └── REVISION(U1 → U2)
 ```
 
-核心约束：
+其中 `U2` 不能由 revision 操作直接生成。它必须先独立经过：
 
-- federation 默认关闭；
-- 只有原作者本人可以 federate 自己的 committed statement；
-- Owner / Moderator 不能替别人公开；
-- 每个开启 federation 的部署实例拥有持久化 Ed25519 身份密钥；
-- 公钥通过 `/.well-known/intent-commit` 暴露；
-- 每条 federated utterance 有稳定 canonical URI；
-- envelope 可以由外部系统独立验签；
-- 签名后修改 statement 会导致验证失败；
-- federation publication 与普通 room history 分开持久化；
-- 删除本地 room 不能保证删除其他系统已经保存的公开副本；
-- v0.6 不接受 inbound federation，也不会主动抓取任意远程 URL。
+```text
+私人草稿
+  ↓
+Reflect
+  ↓
+本人确认
+  ↓
+COMMITTED
+  ↓
+再次同意 Federation Publication
+  ↓
+新的签名 utterance U2
+```
 
-## 最重要的协议约束
+然后才能建立 `U1 → U2` 的 signed revision relation。
+
+## 核心约束
+
+- 只有原作者本人可以撤回或修订自己的 federated utterance；
+- Owner / Moderator 不能替别人完成撤回或修订；
+- 原来的 signed utterance 永远不会被就地修改；
+- 一条 utterance 最多只有一个直接的 retraction 或 revision relation；
+- revision 不能指向自己；
+- revision 不能指向已经被 retract 的 replacement；
+- revision chain 不能形成循环；
+- retraction / revision event 本身也使用实例 Ed25519 身份签名；
+- Federation v1.1 仍然兼容验证 v0.6 产生的 federation v1.0 utterance。
+
+## 最重要的交流协议约束
 
 ```text
 DRAFT → REFLECTED ↔ CLARIFYING → APPROVED → COMMITTED
 ```
 
-协议仍然明确禁止：
+协议继续禁止：
 
 ```text
 DRAFT → COMMITTED
@@ -49,6 +64,22 @@ DRAFT → COMMITTED
 Reflective Agent 的核心原则仍然是：
 
 > **Expand without inventing —— 可以展开，但不能擅自替用户创造理由、事实、立场或承诺。**
+
+## 不同层次的 Commitment
+
+Intent Commit 现在明确区分：
+
+```text
+Room Commit
+    ≠
+External Adapter Publication
+    ≠
+Federation Publication
+    ≠
+Federation Retraction / Revision
+```
+
+每一次扩大受众，或者改变已经公开的承诺，都必须是新的、明确的人类动作。
 
 ## Protocol 与 Federation Package
 
@@ -64,18 +95,19 @@ Federation 签名与验证：
 packages/federation/
 ```
 
-Federated utterance JSON Schema：
+JSON Schema：
 
 ```text
 packages/federation/schemas/federated-utterance.schema.json
+packages/federation/schemas/federation-relation.schema.json
 ```
 
-详细说明见：
+详细说明：
 
 - `docs/protocol-package.md`
 - `docs/federation.md`
 
-## Federation API
+## Federation v1.1 API
 
 实例发现：
 
@@ -83,38 +115,127 @@ packages/federation/schemas/federated-utterance.schema.json
 GET /.well-known/intent-commit
 ```
 
-公开签名发言：
+公开签名 utterance：
 
 ```text
 GET /federation/utterances/:messageId
 ```
 
-查看当前 room 的 federation publication：
+查看某条 utterance 后续是否有 retraction / revision：
+
+```text
+GET /federation/utterances/:messageId/relations
+```
+
+读取某个公开签名关系事件：
+
+```text
+GET /federation/events/:eventId
+```
+
+查看当前 room 的 federation 状态：
 
 ```text
 GET /api/rooms/:code/federation
 ```
 
-原作者发布：
+发布一条 committed message 到 federation：
 
 ```text
 POST /api/rooms/:code/federation/publish
 ```
 
-请求体：
+撤回：
+
+```text
+POST /api/rooms/:code/federation/retract
+```
+
+请求示例：
 
 ```json
 {
-  "messageId": "committed-message-id",
-  "approved": true
+  "messageId": "old-message-id",
+  "approved": true,
+  "reason": "可选的公开撤回理由"
 }
 ```
 
-Reference client 中，只有当前登录用户自己的 committed message，在 federation 开启时才会出现 **Publish to federation** 按钮。
+修订：
+
+```text
+POST /api/rooms/:code/federation/revise
+```
+
+请求示例：
+
+```json
+{
+  "messageId": "old-message-id",
+  "replacementMessageId": "new-message-id",
+  "approved": true,
+  "reason": "可选的公开修订理由"
+}
+```
+
+Reference client 现在会区分 **Federated / Retracted / Revised**。当前登录用户自己的 federated message，如果还没有直接 relation，会出现 `Retract` 与 `Revise…` 操作。
+
+## 为什么不是直接“编辑旧消息”
+
+如果一个公开发言已经被别人引用、保存、验证，那么后来把服务器上的旧文本偷偷替换掉，会破坏可验证性，也会混淆历史责任。
+
+因此 v0.7 采用：
+
+```text
+U1 保持原样
++
+新的签名关系事件
+```
+
+而不是：
+
+```text
+偷偷把 U1 改写成 U2
+```
+
+在这个模型里，撤回表示：
+
+> 我承认我曾公开说过 U1，但我现在公开声明不再认可它。
+
+修订表示：
+
+> 我承认 U1 是之前的公开表达，但现在请以我后来独立确认并公开的 U2 作为新的表述。
+
+## Revision Chain
+
+合法的线性历史可以是：
+
+```text
+U1 → U2 → U3
+```
+
+每一步都对应一个新的 signed revision event。
+
+系统拒绝：
+
+```text
+U1 → U2 → U1
+```
+
+因为这会形成循环，使“当前版本”无法确定。
+
+同样，一条 utterance 不能同时出现两个直接后继：
+
+```text
+U1 → retract
+U1 → revise
+```
+
+二者只能选择一个。
 
 ## Federation 配置
 
-Federation 必须主动开启：
+Federation 默认关闭，主动开启：
 
 ```env
 FEDERATION_ENABLED=true
@@ -123,29 +244,7 @@ FEDERATION_PRIVATE_KEY_PATH=./data/federation-private.pem
 FEDERATION_PUBLIC_KEY_PATH=./data/federation-public.pem
 ```
 
-生产环境应使用 HTTPS 和稳定的 `PUBLIC_BASE_URL`。
-
-私钥代表这个 Intent Commit 实例的长期 federation identity，应当备份并保护好。如果私钥丢失，实例就无法继续以同一个身份签名。
-
-## 为什么 federation 还需要一次确认
-
-Intent Commit 现在至少区分三种不同的 audience commitment：
-
-```text
-Room Commit
-External Adapter Publication
-Federation Publication
-```
-
-它们对应不同的受众范围，因此不能互相自动推断。
-
-一个人在当前 room 中愿意承担一句话，不意味着他已经同意：
-
-- 发到 GitHub；
-- 生成公开永久 URI；
-- 被外部服务器抓取与保存。
-
-所以 federation publication 是新的、独立的 consent event。
+生产环境应使用 HTTPS 和稳定的 `PUBLIC_BASE_URL`。私钥代表部署实例的长期 federation identity，应当备份并妥善保护。
 
 ## GitHub Issues Adapter
 
@@ -167,15 +266,11 @@ GITHUB_TOKEN=...
 POST /api/rooms/:code/adapters/github/issues/:issueNumber/publish
 ```
 
-审计接口：
+外部发布审计：
 
 ```text
 GET /api/rooms/:code/exports
 ```
-
-GitHub adapter 和 federation 遵循同一原则：
-
-> **Room 中的 Commit 不等于自动同意扩大受众。**
 
 ## Room Governance
 
@@ -185,7 +280,7 @@ GitHub adapter 和 federation 遵循同一原则：
 - **moderator**：只能移除普通 member；
 - **member**：参与讨论，没有治理权限。
 
-治理权不能读取或修改别人的私人 draft、clarification 或 Intent Card。
+治理权不能读取或修改别人的私人 draft、clarification 或 Intent Card，也不能替别人 retract/revise federation publication。
 
 ## 本地运行
 
@@ -198,13 +293,13 @@ npm start
 
 打开：`http://localhost:3000`
 
-默认 SQLite 位于：
+默认 SQLite：
 
 ```text
 data/intent-commit.sqlite
 ```
 
-如果开启 federation，还会创建：
+Federation 开启时还会持久化：
 
 ```text
 data/federation-private.pem
@@ -213,64 +308,13 @@ data/federation-public.pem
 
 `data/` 已加入 `.gitignore`。
 
-完整可选配置：
-
-```env
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.6-luna
-DATABASE_PATH=./data/intent-commit.sqlite
-SESSION_TTL_DAYS=30
-COOKIE_SECURE=false
-GITHUB_TOKEN=
-FEDERATION_ENABLED=false
-PUBLIC_BASE_URL=
-FEDERATION_PRIVATE_KEY_PATH=./data/federation-private.pem
-FEDERATION_PUBLIC_KEY_PATH=./data/federation-public.pem
-```
-
 ## Docker
 
 ```bash
 docker compose up --build
 ```
 
-SQLite 和 federation identity key 都保存在 `intent_commit_data` volume 中，因此容器重启不会更换实例身份。
-
-## API 概览
-
-认证：
-
-- `POST /api/register`
-- `POST /api/login`
-- `POST /api/logout`
-- `GET /api/me`
-
-Room：
-
-- `POST /api/rooms`
-- `POST /api/rooms/:code/join`
-- `GET /api/rooms/:code`
-- `GET /api/rooms/:code/events`
-- `POST /api/rooms/:code/commit`
-- `POST /api/rooms/:code/leave`
-
-治理：
-
-- `PATCH /api/rooms/:code/members/:userId/role`
-- `DELETE /api/rooms/:code/members/:userId`
-- `POST /api/rooms/:code/ownership`
-
-协议与发布：
-
-- `GET /api/rooms/:code/protocol/messages`
-- `GET /api/rooms/:code/federation`
-- `POST /api/rooms/:code/federation/publish`
-- `POST /api/rooms/:code/adapters/github/issues/:issueNumber/publish`
-- `GET /api/rooms/:code/exports`
-
-私人反思：
-
-- `POST /api/reflect`
+SQLite 和 federation identity key 都保存在 `intent_commit_data` volume 中。
 
 ## 数据与隐私边界
 
@@ -278,21 +322,14 @@ Room：
 
 不会作为 room discourse 保存：raw draft、clarification、Intent Card、尚未确认的 proposed statement。
 
-Federation publication 是一个单独的公开 artifact。只有作者主动发布后才创建，并独立保存签名 envelope，使 canonical URI 在本地 room 状态改变后仍可验证。
-
-## 关于删除与撤回
-
-已经被 federation 公开的 statement 不能因为删除本地 room 就保证从其他服务器消失。
-
-未来如果加入 retraction，更合理的模型不是“旧内容从未存在”，而是：
+公开 federation artifact 分开持久化：
 
 ```text
-旧的 signed utterance
-        ↓
-新的 signed retraction statement
+federation_publications  已签名的公开 utterance
+federation_events        已签名的 retraction / revision
 ```
 
-也就是用新的公开承诺说明自己撤回或修正之前的公开承诺。
+因此删除本地 room 不能保证删除其他服务器已经保存的公开副本。Retraction 的含义是“公开撤回认可”，而不是声称历史记录从未存在。
 
 ## 测试
 
@@ -300,26 +337,25 @@ Federation publication 是一个单独的公开 artifact。只有作者主动发
 npm test
 ```
 
-测试命令现在会先做 server 与 browser JavaScript syntax check，再运行完整测试。
-
-覆盖内容包括：
+测试会先检查 server 与 browser JavaScript 语法，再运行完整测试，包括：
 
 - 协议状态迁移；
 - `DRAFT → COMMITTED` 禁止规则；
-- federation Ed25519 签名与验证；
-- 被篡改后的验签失败；
-- federation publication 去重；
-- 密码 / session；
+- Federation Ed25519 签名与 tamper detection；
+- signed retraction；
+- signed revision；
+- 同一 subject 的 relation uniqueness；
+- revision self-reference 禁止；
+- account / session；
 - room governance；
 - SQLite persistence；
-- GitHub adapter；
-- external publication audit。
+- GitHub adapter 与 external publication audit。
 
 ## 当前边界
 
-v0.6 是 **verifiable outbound federation**，还不是完整 federated social network。
+v0.7 仍然是 **verifiable outbound federation**，不是完整 federated social network。
 
-目前没有：remote inbox、following、ActivityPub compatibility、signed retraction、远程 delivery replay protection、inbound moderation、正式 database migrations、rate limiting、password recovery、多进程 realtime fan-out。
+目前仍没有：remote inbox、following、ActivityPub compatibility、inbound federation、跨实例 identity binding、remote delivery replay protection、正式 database migration、rate limiting、password recovery、多进程 realtime fan-out。
 
 ## License
 
