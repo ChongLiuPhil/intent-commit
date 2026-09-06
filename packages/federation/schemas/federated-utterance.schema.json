@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intent-commit.dev/schemas/federated-utterance.schema.json",
+  "title": "Intent Commit Federated Utterance",
+  "type": "object",
+  "required": ["protocol", "protocolVersion", "federationVersion", "type", "id", "issuer", "publishedAt", "message", "proof"],
+  "properties": {
+    "protocol": { "const": "intent-commit" },
+    "protocolVersion": { "type": "string" },
+    "federationVersion": { "const": "1.0" },
+    "type": { "const": "federated-committed-utterance" },
+    "id": { "type": "string", "format": "uri" },
+    "issuer": { "type": "string", "format": "uri" },
+    "publishedAt": { "type": "string", "format": "date-time" },
+    "message": {
+      "type": "object",
+      "required": ["protocol", "protocolVersion", "type", "state", "id", "room", "author", "statement", "committedAt"],
+      "properties": {
+        "state": { "const": "COMMITTED" }
+      }
+    },
+    "proof": {
+      "type": "object",
+      "required": ["type", "algorithm", "keyId", "signature"],
+      "properties": {
+        "type": { "const": "IntentCommitEd25519Signature2026" },
+        "algorithm": { "const": "Ed25519" },
+        "keyId": { "type": "string", "format": "uri-reference" },
+        "signature": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
