@@ -1,136 +1,128 @@
 # Intent Commit
 
-**在你把话变成公共发言之前，先确认你愿意让它代表什么。**
+**Think before you commit —— 在表达成为公共话语之前，先确认它真正代表你。**
 
-Intent Commit 是一个关于 **AI 辅助的人类反思式交流（reflective communication）** 的开源实验。
+Intent Commit 是一个开源的 AI 辅助交流协议与参考客户端。它的目标不是让 AI 代替人发言，而是在“私人草稿”和“公共表达”之间建立一个反思层：AI 帮助说者展开、澄清和检查自己的表达，只有经过本人明确确认的版本才会发送给其他参与者。
 
-普通聊天软件往往把几个不同阶段压缩成一个动作：
+> 私人草稿 → AI 反思 → 本人澄清 → 本人确认 → Commit → 公共交流
+
+## v0.2：真正的多用户房间
+
+现在不同用户可以从不同浏览器或设备进入同一个 room：
+
+- 创建房间并分享 room code / 邀请链接；
+- 每位参与者拥有独立的私人 session；
+- 每位参与者拥有独立的私人反思工作区；
+- 原始草稿、澄清内容和 Intent Card 不广播给其他人；
+- 只有本人确认后的 committed statement 才进入房间公共历史；
+- 通过 Server-Sent Events（SSE）实时同步公共消息；
+- 公共消息记录真正的人类作者，而不是 AI Agent；
+- 不同房间的历史相互隔离。
+
+### v0.2 的重要限制
+
+当前房间、参与者和消息只保存在**服务端内存**中。Node 进程重启后房间会消失。这是第一版多用户 MVP 的有意设计；数据库持久化、正式账户系统和更强认证将在后续版本加入。
+
+## 核心原则
+
+普通即时聊天通常是：
 
 ```text
-产生一个不完整的想法 → 输入一句话 → Send
+随手输入 → Send → 公共消息
 ```
 
-Intent Commit 则明确插入一个私人反思层：
+Intent Commit 改成：
 
 ```text
-草稿
+随手输入
   ↓
-AI 解释与结构化
+AI 对意图的解释
   ↓
-说者检查自己的意图
+说者检查 / 澄清
   ↓
-澄清 / 修正
+说者明确确认
   ↓
-本人确认
-  ↓
-Commit & Send
+Committed Message
 ```
 
-## 最重要的原则
+Reflective Agent 的核心约束是：
 
-> **AI 可以帮助展开，但不能擅自发明。**
+> **Expand without inventing —— 可以展开，但不能擅自替用户增加理由、事实、立场或承诺。**
 
-如果原始发言没有给出理由，AI 应当指出“理由尚未说明”，而不是自动替用户生成一个更强的理由。
+如果信息缺失，Agent 应该提出问题或指出不确定性，而不是替用户把论证“补完整”。
 
-如果用户表达的是不确定判断，AI 不能把它改写成确定判断。
+## 多用户交流过程
 
-如果 AI 对用户意图的理解不准确，用户应当能够直接纠正它，并再次运行反思流程。
+1. A 创建房间，把邀请链接发给 B、C 等参与者。
+2. A 在自己的私人区域写草稿。
+3. Agent 生成 Intent Card，对核心判断、意图、理由、假设、歧义和潜在误解进行展开。
+4. A 对 Agent 的理解进行纠正或补充。
+5. A 确认最终表达确实代表自己，并点击 **Commit & Send**。
+6. 只有最终确认版本进入公共房间。
+7. B、C 实时看到该 committed statement，但看不到 A 的原始草稿和反思过程。
+8. B、C 回应时也分别经历自己的私人反思流程。
 
-最终进入公共聊天区的，不是原始草稿，也不是 AI 的解释，而是：
+## 本地运行
 
-> **由表达者本人明确认可、并愿意承担归属责任的 committed statement（承诺性表达）。**
-
-## MVP 已实现
-
-当前版本包含：
-
-- Speaker A / Speaker B 双人轮流发言；
-- 私人的原始草稿区；
-- AI Intent Card；
-- 澄清与重新解释循环；
-- 可编辑的最终表达；
-- “This represents what I am willing to mean” 明确认可步骤；
-- `Commit & Send`；
-- 只展示确认后表达的公共聊天区；
-- 浏览器本地保存已经提交的对话；
-- OpenAI Responses API 接口；
-- 无 API Key 时可运行的本地 demo reflector；
-- 针对“AI 不得虚构理由”的基本测试。
-
-## Intent Card
-
-AI 会尝试把草稿拆成：
-
-- Core claim：核心判断
-- Communicative intention：交际意图
-- Explicit reasons：明确给出的理由
-- Possible assumptions：可能存在的前提
-- Ambiguities：歧义或尚未确定的地方
-- Possible misinterpretations：潜在误读
-- Questions for speaker：需要说者进一步回答的问题
-- Proposed statement：忠实重述建议
-
-Intent Card 默认属于私人空间。
-
-## 运行
-
-要求 Node.js 20+。
+需要 Node.js 20+：
 
 ```bash
-cp .env.example .env
 npm start
 ```
 
-然后打开：
+浏览器打开：
 
 ```text
 http://localhost:3000
 ```
 
-如果 `.env` 中没有 `OPENAI_API_KEY`，程序会自动进入 demo 模式。
+没有 API Key 时会使用 deterministic demo reflector。若要启用 OpenAI：
 
-如果希望调用 OpenAI：
+```bash
+cp .env.example .env
+```
 
-```text
+填写：
+
+```env
 OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.6-luna
 ```
 
-API Key 只存在于 Node 服务端，不会发送到浏览器代码。
+启用外部 AI 后，私人草稿会由服务端发送给配置的模型提供方进行反思，但仍不会广播给房间中的其他用户。
 
-## 核心协议
+## v0.2 API
 
-```text
-DRAFT → REFLECTED ↔ CLARIFYING → APPROVED → SENT
-```
+- `POST /api/rooms`：创建房间
+- `POST /api/rooms/:code/join`：加入房间
+- `GET /api/rooms/:code?token=...`：获取经过身份验证的房间快照
+- `GET /api/rooms/:code/events?token=...`：SSE 实时同步
+- `POST /api/rooms/:code/commit`：发布本人明确确认后的表达
+- `POST /api/rooms/:code/leave`：离开房间并使 session 失效
+- `POST /api/reflect`：对当前用户的私人草稿执行反思
 
-最重要的协议约束是：
+## 公共与私人边界
 
-```text
-DRAFT ↛ SENT
-```
+房间参与者可以看到：
 
-也就是说，未经表达者明确确认，任何 AI 生成或修改后的语言都不应自动成为表达者的公共发言。
+- 显示名称
+- 公共 participant id
+- committed statement
+- commit 时间
 
-进一步说明见：
+默认不向其他参与者公开：
 
-- [`docs/philosophy.md`](docs/philosophy.md)
-- [`docs/protocol.md`](docs/protocol.md)
-- [`docs/agent-spec.md`](docs/agent-spec.md)
-- [`docs/privacy.md`](docs/privacy.md)
+- raw draft
+- clarification
+- Intent Card
+- session token
 
-## 哲学上的核心问题
+进一步隐私边界见 [`docs/privacy.md`](docs/privacy.md)。
 
-这个项目不假设人的“真实意图”总是作为一个完整对象预先存在于头脑中，等待 AI 把它读取出来。
+## 下一步
 
-更合理的模型可能是：人在看到自己的表达被解释、结构化、重新呈现之后，才能进一步决定自己究竟愿意承诺什么。
+v0.3 最值得做的是持久化与真实身份层：数据库、账户认证、可撤销 session；之后再加入 WebSocket presence、房间权限、协议 npm package，以及 Discord/论坛/GitHub Issues 等外部适配器。
 
-因此项目真正关心的不是：
+## License
 
-> AI 能否读取一个已经存在的隐藏意图？
-
-而是：
-
-> AI 能否帮助表达者形成并确认一个 **reflectively endorsed communicative commitment（经反思认可的交际承诺）**？
-
-这也是 Intent Commit 与普通 AI 润色工具之间最重要的区别。
+MIT

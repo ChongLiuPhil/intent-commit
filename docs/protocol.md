@@ -1,70 +1,67 @@
-# Intent Commit Protocol — Draft v0.1
+# Intent Commit Protocol
 
-Intent Commit defines a minimal lifecycle for a human-authored, AI-assisted utterance.
+## 1. Core invariant
 
-## 1. Core distinction
+A public message is not the speaker's raw input. A public message is a statement the human speaker has explicitly reviewed and approved.
 
-A **draft** is not a public utterance. A **committed statement** is.
-
-The protocol separates private reflection from public discourse:
+The protocol therefore distinguishes:
 
 ```text
-DRAFT -> REFLECTED -> CLARIFYING -> APPROVED -> SENT
+DRAFT → REFLECTED ↔ CLARIFYING → APPROVED → COMMITTED
 ```
 
-A system MAY cycle between `REFLECTED` and `CLARIFYING` any number of times.
+Direct transition from `DRAFT` to `COMMITTED` is forbidden.
 
-## 2. State definitions
+## 2. Human authorship
 
-### DRAFT
-Private, provisional language entered by the speaker.
+The Reflective Agent may interpret, reorganize, expose ambiguity, and propose a faithful reformulation. It must not become the author of new reasons, facts, accusations, commitments, certainty, or conclusions.
 
-### REFLECTED
-An agent has produced a structured interpretation of the draft. This interpretation is a hypothesis, not the speaker's position.
+A `COMMITTED` message is attributed to the human participant who approved it.
 
-### CLARIFYING
-The speaker corrects, rejects, narrows, expands, or qualifies the agent's interpretation.
+## 3. Multi-user rooms
 
-### APPROVED
-The speaker explicitly endorses a final statement as representing what they are willing to mean in this conversational context.
+A room contains:
 
-### SENT
-The approved statement enters the shared discourse space.
+- a public room code;
+- public participant identities;
+- a public ordered list of committed messages;
+- private participant session credentials held by each client.
 
-## 3. Message envelope
+Each participant has a private reflective workspace. Drafts and Intent Cards are outside the public room state.
 
-A minimal public message can be represented as:
+## 4. Commit operation
+
+A server-side commit operation requires:
+
+- a valid room session;
+- a non-empty final statement;
+- an explicit `approved: true` assertion from the client interaction.
+
+On success, the server creates a committed message with a server-side timestamp and the authenticated participant's public identity.
+
+## 5. Public message shape
 
 ```json
 {
-  "id": "uuid",
-  "speaker": "speaker-id",
-  "statement": "speaker-approved text",
-  "committedAt": "ISO-8601 timestamp",
-  "agentAssisted": true
+  "id": "...",
+  "roomCode": "ABC123",
+  "author": {
+    "id": "public-participant-id",
+    "name": "Alice"
+  },
+  "statement": "Speaker-approved text",
+  "committedAt": "2026-09-06T00:00:00.000Z"
 }
 ```
 
-Raw drafts, agent interpretations, and private clarifications MUST NOT be made public by default.
+Private session tokens are never included in the public message.
 
-## 4. Commitment invariant
+## 6. Realtime transport
 
-A conforming implementation MUST NOT transition from `DRAFT`, `REFLECTED`, or `CLARIFYING` directly to `SENT`.
+The v0.2 reference implementation uses Server-Sent Events (SSE) to push authenticated room snapshots to connected clients after joins, commits, and leaves.
 
-A public send requires an explicit human approval event.
+SSE is an implementation choice, not part of the philosophical protocol. A future implementation may use WebSockets, Matrix, ActivityPub, email, or another transport while preserving the same commit semantics.
 
-## 5. Agent epistemic status
+## 7. Storage
 
-Agent output MUST be presented as an interpretation to be inspected, not as a discovery of a hidden, authoritative intention.
-
-The protocol therefore treats intention as potentially *formed and refined through reflection*, not merely retrieved from a pre-existing mental object.
-
-## 6. Interoperability direction
-
-Future versions may define portable envelopes for:
-
-- agent interpretation cards;
-- revision histories;
-- user-controlled expression profiles;
-- cryptographic commitment signatures;
-- transport adapters for Matrix, email, forums, issue trackers, and chat systems.
+v0.2 stores rooms in process memory. Persistence is explicitly outside the current protocol guarantee.

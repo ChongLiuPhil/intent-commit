@@ -1,9 +1,9 @@
 {
   "name": "intent-commit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
-  "description": "A reflective communication protocol and reference client for AI-assisted human dialogue.",
+  "description": "A reflective communication protocol and multi-user reference client for AI-assisted human dialogue.",
   "license": "MIT",
   "scripts": {
     "start": "node server.js",

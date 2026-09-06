@@ -1,19 +1,44 @@
-# Privacy Model — MVP
+# Privacy model
 
-The reference client uses a privacy-by-default split.
+Intent Commit treats the reflective workspace and the committed room as different trust domains.
 
-## Public
+## Private to the speaker
 
-Only committed statements are stored in the browser's public conversation history.
+The reference client does not broadcast these fields to other room participants:
 
-## Private
+- raw draft;
+- clarification text;
+- Intent Card;
+- private participant session token.
 
-The current draft, agent interpretation, and clarification remain in the active browser UI and are not added to the public conversation history.
+## Public inside a room
 
-When `OPENAI_API_KEY` is configured, the draft, clarification, and a small window of already-public conversation context are sent from the server to the configured OpenAI model to perform reflection. The API key remains server-side.
+Room participants receive:
 
-When no API key is configured, the app runs a deterministic demo reflector and does not call an external AI service.
+- display names and public participant ids;
+- committed statements;
+- commit timestamps;
+- room name and room code.
 
-## Non-goals of v0.1
+## AI provider boundary
 
-This MVP does not provide accounts, end-to-end encryption, multi-device sync, remote persistence, or private multi-user networking. Do not deploy it as a confidential production messenger without adding an appropriate security architecture.
+When `OPENAI_API_KEY` is configured, the server sends the current speaker's draft, clarification, and recent committed public context to the configured OpenAI model for reflection. Therefore "private" means private from other room participants, not invisible to the configured AI provider.
+
+Without an API key, the deterministic demo reflector runs locally in the Node process.
+
+## v0.2 session and storage limitations
+
+Room sessions are bearer-style random tokens stored in the browser's local storage and in server memory. The SSE endpoint currently carries that token as a query parameter. Deployments should therefore use HTTPS and avoid request logging that records full query strings.
+
+Rooms and committed messages are not persisted in v0.2. Restarting the process clears them.
+
+## Future hardening
+
+Production-oriented versions should add:
+
+- authenticated accounts and revocable sessions;
+- durable storage with explicit retention controls;
+- encrypted transport and secure cookie/session options;
+- database authorization checks;
+- rate limiting and abuse controls;
+- optional end-to-end or client-side privacy designs where compatible with AI reflection.

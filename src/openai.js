@@ -10,7 +10,8 @@ NON-NEGOTIABLE RULES:
 4. Preserve uncertainty. Do not turn "maybe" into certainty or a question into a claim.
 5. Do not make the speaker more aggressive, persuasive, polite, certain, or sophisticated unless requested.
 6. The proposed statement must be a faithful reformulation, not an improved argument authored by you.
-7. Output JSON only. No markdown.
+7. Public conversation history is context only. Never attribute another participant's claims to the current speaker.
+8. Output JSON only. No markdown.
 
 Return exactly this shape:
 {
@@ -25,16 +26,11 @@ Return exactly this shape:
 }`;
 
 function extractText(response) {
-  if (typeof response?.output_text === "string" && response.output_text.trim()) {
-    return response.output_text;
-  }
-
+  if (typeof response?.output_text === "string" && response.output_text.trim()) return response.output_text;
   const chunks = [];
   for (const item of response?.output || []) {
     for (const content of item?.content || []) {
-      if (content?.type === "output_text" && typeof content.text === "string") {
-        chunks.push(content.text);
-      }
+      if (content?.type === "output_text" && typeof content.text === "string") chunks.push(content.text);
     }
   }
   return chunks.join("\n").trim();
@@ -46,30 +42,22 @@ export async function reflectWithOpenAI({ draft, clarification = "", history = [
 
   const model = process.env.OPENAI_MODEL || "gpt-5.6-luna";
   const conversationContext = history
-    .slice(-6)
-    .map((m) => `${m.speaker}: ${m.statement}`)
+    .slice(-12)
+    .map((m) => `${m.author?.name || m.speaker || "Participant"}: ${m.statement}`)
     .join("\n");
 
-  const input = `${SYSTEM_PROMPT}\n\nPRIVATE SPEAKER DRAFT:\n${draft}\n\nSPEAKER CLARIFICATION:\n${clarification || "(none)"}\n\nPUBLIC CONVERSATION CONTEXT (for reference only; never attribute new claims to the speaker):\n${conversationContext || "(none)"}`;
+  const input = `${SYSTEM_PROMPT}\n\nPRIVATE SPEAKER DRAFT:\n${draft}\n\nSPEAKER CLARIFICATION:\n${clarification || "(none)"}\n\nPUBLIC COMMITTED CONVERSATION CONTEXT (reference only):\n${conversationContext || "(none)"}`;
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model,
-      input,
-      reasoning: { effort: "low" },
-    }),
+    body: JSON.stringify({ model, input, reasoning: { effort: "low" } }),
   });
 
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = data?.error?.message || `OpenAI API returned HTTP ${response.status}.`;
-    throw new Error(message);
-  }
-
+  if (!response.ok) throw new Error(data?.error?.message || `OpenAI API returned HTTP ${response.status}.`);
   return parseModelJson(extractText(data));
 }

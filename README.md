@@ -1,162 +1,160 @@
 # Intent Commit
 
-[简体中文 README](README.zh-CN.md)
-
 **Think before you commit.**
 
-Intent Commit is an open-source experiment in **reflective, AI-assisted human communication**. Instead of allowing a rough draft to become a public message immediately, it inserts a private metacognitive step:
+Intent Commit is an open-source reflective communication protocol and reference client. AI does not speak on behalf of a human. Instead, it helps the speaker inspect, clarify, and explicitly approve what they are willing to mean before that statement becomes public.
 
-```text
-Draft → AI reflection → Speaker clarification → Speaker approval → Committed statement
-```
+> Draft privately → Reflect → Clarify → Approve → Commit → Share
 
-The AI does not speak for the user. It helps the user inspect what they are about to make attributable to themselves.
+## v0.2: real multi-user rooms
 
-## Why this is different from an AI writing assistant
+The reference client now supports multiple people using separate browsers or devices:
 
-Most writing assistants optimize the sentence. Intent Commit optimizes the **speaker's opportunity to inspect and endorse the meaning**.
+- create a room and share its room code / invite link;
+- each participant receives an independent private room session;
+- each participant has a private reflective workspace;
+- only speaker-approved statements are stored in the room conversation;
+- committed messages are synchronized live with Server-Sent Events (SSE);
+- the public timeline records the human author of each committed statement;
+- room histories are isolated from one another.
 
-The core rule is:
+### Important v0.2 limitation
+
+Rooms, participants, and committed messages are currently stored **in server memory only**. Restarting the Node process clears active rooms. This is intentional for the first multi-user MVP; persistent storage and authentication belong in a later release.
+
+## Why this exists
+
+Ordinary chat software makes sending nearly frictionless:
+
+`raw input → public message`
+
+Intent Commit inserts a reflective layer:
+
+`raw input → AI interpretation → speaker clarification → speaker approval → committed message`
+
+The AI is a **Reflective Agent**, not a ghostwriter. Its core rule is:
 
 > **Expand without inventing.**
 
-If a reason is missing, the agent should ask for it instead of fabricating one. If the speaker is uncertain, the agent should preserve the uncertainty. If the agent is wrong, the speaker corrects it before anything becomes public.
+If a reason, assumption, intention, or scope is missing, the agent should surface the uncertainty or ask a question rather than silently authoring a stronger position.
 
-## MVP
+## Run locally
 
-The repository contains a dependency-free Node.js reference client with:
-
-- two alternating speakers;
-- a private draft area;
-- an AI-generated Intent Card;
-- a clarification / re-reflection loop;
-- an editable final statement;
-- explicit **Commit & Send** approval;
-- a public timeline containing only committed statements;
-- browser-local conversation persistence;
-- an OpenAI Responses API adapter;
-- a no-key deterministic demo mode for development and testing.
-
-## Run it
-
-Requires Node.js 20+.
+Requirements: Node.js 20+
 
 ```bash
-cp .env.example .env
-# optionally edit .env and add OPENAI_API_KEY
-
-# export variables from .env using your preferred shell/tool, then:
 npm start
 ```
 
 Open `http://localhost:3000`.
 
-### Quick run without any API key
+Without an API key, Intent Commit uses a deterministic demo reflector. To use OpenAI:
 
 ```bash
-npm start
+cp .env.example .env
 ```
 
-The header will show `DEMO REFLECTOR`. This mode is intentionally limited; it demonstrates the interaction protocol without pretending to be a full language model.
+Then set:
 
-### Run with OpenAI
-
-Set:
-
-```bash
-OPENAI_API_KEY=your_server_side_key
+```env
+OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.6-luna
-npm start
 ```
 
-The API key is read only by the Node server and is never sent to browser JavaScript.
+The Responses API is used for reflection. Private drafts are sent to the configured server-side model provider when AI mode is enabled, but they are not broadcast to room participants.
 
-## The Intent Card
+## Multi-user flow
 
-Before committing, the speaker sees:
+1. Alice creates a room and sends Bob the invite link.
+2. Alice drafts a statement privately.
+3. Alice's Reflective Agent produces an Intent Card.
+4. Alice corrects or clarifies the interpretation.
+5. Alice approves the final statement and selects **Commit & Send**.
+6. Only that approved statement enters the room timeline.
+7. Bob receives it live, then goes through the same private reflection process before replying.
 
-- core claim;
-- communicative intention;
-- explicit reasons;
-- possible assumptions;
-- ambiguities;
-- possible misinterpretations;
-- questions for the speaker;
-- proposed faithful reformulation.
+## API surface in v0.2
 
-The card is **private by default**. The listener receives only the final speaker-approved statement.
+- `POST /api/rooms` — create room and creator session
+- `POST /api/rooms/:code/join` — join room
+- `GET /api/rooms/:code?token=...` — fetch authenticated room snapshot
+- `GET /api/rooms/:code/events?token=...` — live SSE snapshots
+- `POST /api/rooms/:code/commit` — publish an explicitly approved statement
+- `POST /api/rooms/:code/leave` — invalidate a participant session
+- `POST /api/reflect` — privately reflect on the current speaker's draft
 
-## Protocol invariant
+## Trust boundary
 
-A conforming client should never allow:
+### Public to room participants
+
+- display name
+- public participant id
+- committed statement
+- commit timestamp
+
+### Private to the speaker workflow
+
+- raw draft
+- clarification text
+- Intent Card
+- session token
+
+When an external model provider is enabled, raw drafts and clarifications are necessarily processed by that provider. See [`docs/privacy.md`](docs/privacy.md).
+
+## Protocol states
 
 ```text
-DRAFT → SENT
+DRAFT
+  ↓
+REFLECTED
+  ↕
+CLARIFYING
+  ↓
+APPROVED
+  ↓
+COMMITTED
 ```
 
-Public speech requires an explicit human approval step:
+`DRAFT → COMMITTED` is deliberately forbidden by the interaction design and server commit API.
+
+## Project structure
 
 ```text
-DRAFT → REFLECTED ↔ CLARIFYING → APPROVED → SENT
+intent-commit/
+├── public/              # reference web client
+├── src/
+│   ├── reflector.js     # deterministic reflector + card normalization
+│   ├── openai.js        # OpenAI reflection adapter
+│   └── rooms.js         # multi-user room/session domain logic
+├── test/                # protocol and room tests
+├── docs/
+│   ├── philosophy.md
+│   ├── protocol.md
+│   ├── agent-spec.md
+│   ├── privacy.md
+│   └── multi-user.md
+└── server.js            # HTTP, room APIs and SSE transport
 ```
-
-See [`docs/protocol.md`](docs/protocol.md).
-
-## Project documents
-
-- [`docs/philosophy.md`](docs/philosophy.md) — philosophical rationale
-- [`docs/protocol.md`](docs/protocol.md) — state protocol
-- [`docs/agent-spec.md`](docs/agent-spec.md) — non-invention rules and Intent Card schema
-- [`docs/privacy.md`](docs/privacy.md) — MVP privacy boundary
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — contribution direction
-
-## Architecture
-
-```text
-Browser
-├── Public committed conversation (localStorage)
-└── Private reflective workspace
-    ├── raw draft
-    ├── clarification
-    └── Intent Card
-          │
-          ▼
-Node server /api/reflect
-├── OpenAI Responses API adapter (when configured)
-└── deterministic demo reflector (fallback)
-```
-
-No database is required for the MVP.
-
-## What this project is not
-
-Intent Commit is not intended to:
-
-- autonomously negotiate on behalf of users;
-- impersonate users;
-- infer a hidden "true self";
-- silently improve an argument by adding facts or reasons;
-- send messages without human approval.
-
-Those constraints are features, not missing capabilities.
 
 ## Roadmap
 
-1. **v0.1 — Reflective loop**: current repository.
-2. **v0.2 — Real multi-user rooms**: authenticated sessions and a server-side message store.
-3. **v0.3 — Protocol package**: transport-neutral TypeScript schemas and interoperability tests.
-4. **v0.4 — User-controlled expression profiles**: opt-in preferences without identity impersonation.
-5. **v0.5 — Adapters**: issue trackers, forums, email, Matrix/ActivityPub experiments.
-6. **Research track**: metrics for meaning drift, speaker endorsement, clarification value, and conflict reduction.
+- durable database-backed room history;
+- account authentication and revocable sessions;
+- encrypted / privacy-preserving storage options;
+- WebSocket transport for richer presence and typing-state features;
+- room roles and moderation without exposing private drafts;
+- independently versioned Intent Commit protocol package;
+- adapters for forums, issue trackers, email and team chat;
+- user-controlled expression profiles without covert personality simulation.
 
-## Research questions
+## Development
 
-- Does reflection reduce unintended meaning drift?
-- Which Intent Card fields most often trigger useful self-correction?
-- Does explicit commitment improve perceived fairness in disagreement?
-- When does AI clarification help, and when does it over-structure ordinary conversation?
-- Can we measure the distance between an initial draft and a reflectively endorsed utterance without treating either as privileged access to a "true" intention?
+```bash
+npm test
+```
+
+The tests include a hard invariant: the server refuses to commit a statement unless explicit speaker approval is supplied.
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT

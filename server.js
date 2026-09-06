@@ -4,9 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { demoReflect } from "./src/reflector.js";
 import { reflectWithOpenAI } from "./src/openai.js";
+import { createRoomStore } from "./src/rooms.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
+const rooms = createRoomStore();
+const subscribers = new Map();
 
 async function loadLocalEnv() {
   try {
@@ -47,6 +50,12 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function sendApiError(res, error) {
+  const message = error?.message || "Request failed.";
+  const status = /not found/i.test(message) ? 404 : /invalid|required|too long|approval/i.test(message) ? 400 : 500;
+  sendJson(res, status, { error: message });
+}
+
 async function readJson(req) {
   const parts = [];
   let size = 0;
@@ -56,6 +65,54 @@ async function readJson(req) {
     parts.push(chunk);
   }
   return JSON.parse(Buffer.concat(parts).toString("utf8") || "{}");
+}
+
+function sendEvent(res, event, payload) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function broadcastSnapshot(roomCode) {
+  const group = subscribers.get(roomCode);
+  if (!group?.size) return;
+
+  for (const client of [...group]) {
+    try {
+      const snapshot = rooms.getSnapshot(roomCode, client.participantToken);
+      sendEvent(client.res, "snapshot", snapshot);
+    } catch {
+      group.delete(client);
+      client.res.end();
+    }
+  }
+
+  if (!group.size) subscribers.delete(roomCode);
+}
+
+function subscribeToRoom(req, res, roomCode, participantToken) {
+  rooms.authenticate(roomCode, participantToken);
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.write("retry: 2000\n\n");
+
+  const client = { res, participantToken };
+  const group = subscribers.get(roomCode) || new Set();
+  group.add(client);
+  subscribers.set(roomCode, group);
+
+  sendEvent(res, "snapshot", rooms.getSnapshot(roomCode, participantToken));
+  const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 20_000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    group.delete(client);
+    if (!group.size) subscribers.delete(roomCode);
+  });
 }
 
 async function serveStatic(req, res) {
@@ -77,6 +134,7 @@ async function serveStatic(req, res) {
       "Content-Type": MIME[path.extname(candidate)] || "application/octet-stream",
       "Cache-Control": "no-cache",
     });
+    if (req.method === "HEAD") return res.end();
     res.end(body);
   } catch {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -85,24 +143,96 @@ async function serveStatic(req, res) {
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.method === "GET" && req.url === "/api/health") {
+  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const pathname = url.pathname;
+
+  if (req.method === "GET" && pathname === "/api/health") {
     return sendJson(res, 200, {
       ok: true,
+      version: "0.2.0",
+      realtime: "sse",
+      storage: "memory",
       mode: process.env.OPENAI_API_KEY ? "openai" : "demo",
       model: process.env.OPENAI_API_KEY ? (process.env.OPENAI_MODEL || "gpt-5.6-luna") : null,
     });
   }
 
-  if (req.method === "POST" && req.url === "/api/reflect") {
+  if (req.method === "POST" && pathname === "/api/rooms") {
+    try {
+      const body = await readJson(req);
+      const result = rooms.createRoom({ displayName: body.displayName, roomName: body.roomName });
+      return sendJson(res, 201, result);
+    } catch (error) {
+      return sendApiError(res, error);
+    }
+  }
+
+  const roomMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)(?:\/(join|commit|leave|events))?$/);
+  if (roomMatch) {
+    const roomCode = roomMatch[1].toUpperCase();
+    const action = roomMatch[2] || "snapshot";
+
+    try {
+      if (req.method === "POST" && action === "join") {
+        const body = await readJson(req);
+        const result = rooms.joinRoom({ code: roomCode, displayName: body.displayName });
+        sendJson(res, 200, result);
+        broadcastSnapshot(roomCode);
+        return;
+      }
+
+      if (req.method === "GET" && action === "snapshot") {
+        const token = url.searchParams.get("token");
+        return sendJson(res, 200, { room: rooms.getSnapshot(roomCode, token) });
+      }
+
+      if (req.method === "GET" && action === "events") {
+        const token = url.searchParams.get("token");
+        return subscribeToRoom(req, res, roomCode, token);
+      }
+
+      if (req.method === "POST" && action === "commit") {
+        const body = await readJson(req);
+        const message = rooms.commitMessage({
+          code: roomCode,
+          participantToken: body.participantToken,
+          statement: body.statement,
+          approved: body.approved,
+        });
+        sendJson(res, 201, { message });
+        broadcastSnapshot(roomCode);
+        return;
+      }
+
+      if (req.method === "POST" && action === "leave") {
+        const body = await readJson(req);
+        rooms.leaveRoom({ code: roomCode, participantToken: body.participantToken });
+        sendJson(res, 200, { ok: true });
+        broadcastSnapshot(roomCode);
+        return;
+      }
+    } catch (error) {
+      return sendApiError(res, error);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/reflect") {
     try {
       const body = await readJson(req);
       const draft = String(body.draft || "").trim();
       const clarification = String(body.clarification || "").trim();
-      const history = Array.isArray(body.history) ? body.history : [];
+      const roomCode = String(body.roomCode || "").trim().toUpperCase();
+      const participantToken = String(body.participantToken || "").trim();
 
       if (!draft) return sendJson(res, 400, { error: "Draft is required." });
       if (draft.length > 20_000 || clarification.length > 10_000) {
         return sendJson(res, 400, { error: "Draft or clarification is too long for this MVP." });
+      }
+
+      let history = [];
+      if (roomCode || participantToken) {
+        const snapshot = rooms.getSnapshot(roomCode, participantToken);
+        history = snapshot.messages;
       }
 
       if (process.env.OPENAI_API_KEY) {
@@ -112,7 +242,7 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, 200, { mode: "demo", card: demoReflect({ draft, clarification }) });
     } catch (error) {
-      return sendJson(res, 500, { error: error?.message || "Reflection failed." });
+      return sendApiError(res, error);
     }
   }
 
@@ -125,6 +255,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Intent Commit running at http://localhost:${port}`);
+  console.log(`Intent Commit v0.2 running at http://localhost:${port}`);
+  console.log("Multi-user rooms: enabled (in-memory + Server-Sent Events)");
   console.log(process.env.OPENAI_API_KEY ? "Reflection mode: OpenAI" : "Reflection mode: deterministic demo");
 });
