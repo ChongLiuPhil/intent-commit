@@ -8,24 +8,33 @@ Intent Commit is an open protocol and reference client for **AI-mediated reflect
 
 [简体中文 README](README.zh-CN.md)
 
-## v0.5: first external adapter
+## v0.6: verifiable federation
 
-v0.5 proves that the Intent Commit protocol can leave its own reference client without collapsing its consent model.
+v0.6 adds **author-controlled, cryptographically verifiable federation** without turning every room message into a public object.
 
-The first adapter publishes an already-COMMITTED message to a GitHub Issue or Pull Request conversation comment.
+A committed room message becomes federated only after a second explicit approval by its original human author:
 
-Key rules:
+```text
+COMMITTED in room
+      ↓
+Explicit federation approval
+      ↓
+Signed public canonical URI
+```
 
-- only protocol-valid `COMMITTED` messages are eligible;
-- room commitment does **not** automatically authorize a larger audience;
-- the original human author must explicitly approve the external publication again;
-- room owners and moderators cannot export someone else's statement;
-- GitHub credentials remain server-side;
-- successful exports are written to a persistent SQLite audit table;
-- duplicate publication of the same message to the same target is rejected;
-- raw drafts, clarification text and Intent Cards never enter the adapter.
+Key properties:
 
-The repository includes a public dogfooding target at Issue `#1` for future end-to-end testing.
+- federation is disabled by default;
+- only the original author may federate their committed statement;
+- room owners and moderators cannot federate someone else's statement;
+- each enabled deployment has a persistent Ed25519 instance identity;
+- the public verification key is exposed through `/.well-known/intent-commit`;
+- published utterances have stable canonical URIs;
+- envelopes are signed and independently verifiable;
+- tampering with the signed statement causes verification to fail;
+- federation publication is persisted independently from room membership/history;
+- deleting a local room cannot guarantee deletion of copies already fetched by other systems;
+- v0.6 deliberately does not accept inbound federation or fetch arbitrary remote URLs.
 
 ## Core protocol invariant
 
@@ -45,44 +54,91 @@ The Reflective Agent follows one central rule:
 
 Missing reasons, assumptions, commitments, or intentions should be surfaced as uncertainty or questions, not silently authored by the model.
 
-## Protocol package
+## Protocol and federation packages
 
-The transport-neutral protocol lives in:
+Transport-neutral protocol primitives:
 
 ```text
 packages/protocol/
 ```
 
-It exports state transitions, room-role capabilities, Intent Card validation, and committed-message envelope creation/validation.
-
-Schemas:
-
-- `packages/protocol/schemas/intent-card.schema.json`
-- `packages/protocol/schemas/committed-message.schema.json`
-
-Reference protocol endpoint:
+Federation signing / verification primitives:
 
 ```text
-GET /api/rooms/:code/protocol/messages
+packages/federation/
 ```
 
-See [`docs/protocol-package.md`](docs/protocol-package.md).
+Federated utterance schema:
+
+```text
+packages/federation/schemas/federated-utterance.schema.json
+```
+
+See [`docs/protocol-package.md`](docs/protocol-package.md) and [`docs/federation.md`](docs/federation.md).
+
+## Federation endpoints
+
+Instance discovery:
+
+```text
+GET /.well-known/intent-commit
+```
+
+Public signed utterance:
+
+```text
+GET /federation/utterances/:messageId
+```
+
+Room federation state:
+
+```text
+GET /api/rooms/:code/federation
+```
+
+Original-author publication:
+
+```text
+POST /api/rooms/:code/federation/publish
+```
+
+Body:
+
+```json
+{
+  "messageId": "committed-message-id",
+  "approved": true
+}
+```
+
+The reference client exposes **Publish to federation** only on the signed-in author's own committed messages when federation is enabled.
+
+## Federation configuration
+
+Federation is opt-in:
+
+```env
+FEDERATION_ENABLED=true
+PUBLIC_BASE_URL=https://intent.example.org
+FEDERATION_PRIVATE_KEY_PATH=./data/federation-private.pem
+FEDERATION_PUBLIC_KEY_PATH=./data/federation-public.pem
+```
+
+Use HTTPS and a stable `PUBLIC_BASE_URL` in production. The private key is the persistent identity of the instance and should be backed up securely.
 
 ## GitHub Issues adapter
 
-Reusable adapter package:
+v0.5's first external adapter remains available:
 
 ```text
 packages/adapters-github/
 ```
 
-Server configuration:
+Configure server-side only:
 
 ```env
 GITHUB_TOKEN=...
 ```
-
-The token is read only by the Node server. Do not expose it to browser JavaScript or commit it to Git.
 
 Publish endpoint:
 
@@ -90,23 +146,13 @@ Publish endpoint:
 POST /api/rooms/:code/adapters/github/issues/:issueNumber/publish
 ```
 
-Body:
-
-```json
-{
-  "repository": "owner/repo",
-  "messageId": "committed-message-id",
-  "approved": true
-}
-```
-
-Audit endpoint:
+External publication audit:
 
 ```text
 GET /api/rooms/:code/exports
 ```
 
-See [`docs/adapters/github-issues.md`](docs/adapters/github-issues.md), [`docs/adapters/consent-model.md`](docs/adapters/consent-model.md), and [`docs/adapters/security.md`](docs/adapters/security.md).
+The GitHub adapter and federation share the same audience principle: **room commitment does not automatically authorize publication to a larger audience**.
 
 ## Room governance
 
@@ -114,7 +160,7 @@ Roles remain deliberately narrow:
 
 - **owner** — may promote/demote moderators, remove non-owners, and transfer ownership;
 - **moderator** — may remove ordinary members only;
-- **member** — participates in the room but has no moderation authority.
+- **member** — participates but has no moderation authority.
 
 Governance never exposes or modifies another participant's private reflection workspace.
 
@@ -129,20 +175,22 @@ npm start
 
 Open `http://localhost:3000`.
 
-The first start creates `data/intent-commit.sqlite`. The `data/` directory is gitignored.
+The first start creates the SQLite database under `data/`. Federation keys are also stored under `data/` when federation is enabled. The directory is gitignored.
 
 Optional server-side configuration:
 
 ```env
-OPENAI_API_KEY=...
+OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.6-luna
 DATABASE_PATH=./data/intent-commit.sqlite
 SESSION_TTL_DAYS=30
 COOKIE_SECURE=false
 GITHUB_TOKEN=
+FEDERATION_ENABLED=false
+PUBLIC_BASE_URL=
+FEDERATION_PRIVATE_KEY_PATH=./data/federation-private.pem
+FEDERATION_PUBLIC_KEY_PATH=./data/federation-public.pem
 ```
-
-For an HTTPS deployment, set `COOKIE_SECURE=true`.
 
 ## Docker
 
@@ -150,7 +198,7 @@ For an HTTPS deployment, set `COOKIE_SECURE=true`.
 docker compose up --build
 ```
 
-SQLite is persisted in the `intent_commit_data` volume. See [`docs/deployment.md`](docs/deployment.md).
+SQLite and federation identity keys are persisted in the `intent_commit_data` volume.
 
 ## API summary
 
@@ -176,9 +224,11 @@ Governance:
 - `DELETE /api/rooms/:code/members/:userId`
 - `POST /api/rooms/:code/ownership`
 
-Protocol and adapters:
+Protocol / publication:
 
 - `GET /api/rooms/:code/protocol/messages`
+- `GET /api/rooms/:code/federation`
+- `POST /api/rooms/:code/federation/publish`
 - `POST /api/rooms/:code/adapters/github/issues/:issueNumber/publish`
 - `GET /api/rooms/:code/exports`
 
@@ -188,11 +238,11 @@ Reflection:
 
 ## Persistence and privacy boundary
 
-Stored in SQLite: accounts, password hashes, hashed sessions, rooms, memberships, roles, committed statements, and successful external-publication audit records.
+Stored in room persistence: accounts, password hashes, hashed sessions, rooms, memberships, roles, and committed statements.
 
-Not stored as room discourse: raw drafts, clarification text, Intent Cards, and unapproved reformulations. When an external LLM is enabled, private reflective inputs are processed by that provider.
+Not stored as room discourse: raw drafts, clarification text, Intent Cards, and unapproved reformulations.
 
-External publication is treated as a separate consent event because changing the audience changes the practical consequences of an utterance.
+Federation publication is a separate public artifact created only after explicit author approval. Once published, its signed envelope is kept independently so the canonical URI remains verifiable even if local room state later changes.
 
 ## Development
 
@@ -200,26 +250,27 @@ External publication is treated as a separate consent event because changing the
 npm test
 ```
 
-Tests cover protocol transitions, message-envelope interoperability, password hashing, session revocation, membership, explicit approval, governance, persistence, GitHub adapter formatting/request construction, and external-publication audit deduplication.
+The test command now syntax-checks the server and browser client before running the suite. Tests cover protocol transitions, signed federation verification/tamper detection, publication deduplication, password/session behavior, governance, persistence, the GitHub adapter, and publication audit invariants.
 
 ## Project structure
 
 ```text
-packages/protocol/          transport-neutral protocol primitives and schemas
-packages/adapters-github/   GitHub Issues outbound adapter
-public/                     reference web client
-src/reflector.js            Intent Card normalization and demo reflector
-src/openai.js               OpenAI reflection adapter
-src/store.js                SQLite accounts, sessions, rooms, roles and messages
-src/external-publications.js external publication audit store
-server.js                   HTTP API, auth, governance, adapters and SSE transport
-test/                       protocol, adapter, reflector and persistence tests
-docs/                       philosophy, protocol, privacy, deployment and adapter notes
+packages/protocol/           transport-neutral protocol primitives and schemas
+packages/federation/         Ed25519 federation signing / verification
+packages/adapters-github/    GitHub Issues outbound adapter
+public/                      reference web client
+src/store.js                 SQLite accounts, rooms and committed messages
+src/federation-identity.js   persistent instance Ed25519 identity
+src/federation-publications.js signed public utterance persistence
+src/external-publications.js external adapter audit store
+server.js                    HTTP API, auth, federation, adapters and SSE
+test/                        protocol, federation, adapter and persistence tests
+docs/                        philosophy, protocol, federation and deployment notes
 ```
 
 ## Current limits
 
-v0.5 is still a reference implementation. The GitHub bridge is outbound-only and currently requires a server-configured token. The project does not yet include password recovery, rate limiting, formal database migrations, multi-process realtime fan-out, per-room provider credentials, or inbound federation/webhook semantics.
+v0.6 is **verifiable outbound federation**, not a full federated social network. It does not yet implement remote inbox delivery, remote following, ActivityPub compatibility, signed retraction statements, inbound moderation, replay protection for remote deliveries, formal database migrations, rate limiting, password recovery, or multi-process realtime fan-out.
 
 ## License
 
