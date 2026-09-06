@@ -1,0 +1,18 @@
+services:
+  intent-commit:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DATABASE_PATH: /app/data/intent-commit.sqlite
+      SESSION_TTL_DAYS: 30
+      COOKIE_SECURE: "false"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
+    volumes:
+      - intent_commit_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  intent_commit_data:
