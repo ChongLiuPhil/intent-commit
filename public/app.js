@@ -13,6 +13,7 @@ const state = {
     publications: [],
     events: [],
     provenance: [],
+    argumentMaps: [],
     graphNodes: [],
   },
 };
@@ -78,6 +79,7 @@ function resetFederationState() {
   state.federation.publications = [];
   state.federation.events = [];
   state.federation.provenance = [];
+  state.federation.argumentMaps = [];
   state.federation.graphNodes = [];
 }
 
@@ -182,6 +184,10 @@ function provenanceForMessage(messageId) {
   return state.federation.provenance.filter((item) => item.sourceUri === publication.canonicalUri);
 }
 
+function argumentMapForMessage(messageId) {
+  return state.federation.argumentMaps.find((item) => item.messageId === messageId) || null;
+}
+
 async function refreshFederation() {
   resetFederationState();
   if (!state.room || !state.federation.enabled) return;
@@ -193,6 +199,7 @@ async function refreshFederation() {
     state.federation.publications = roomData.publications || [];
     state.federation.events = roomData.events || [];
     state.federation.provenance = roomData.provenance || [];
+    state.federation.argumentMaps = roomData.argumentMaps || [];
     state.federation.graphNodes = graphData.nodes || [];
   } catch (error) {
     console.error("Could not load federation state", error);
@@ -327,6 +334,45 @@ async function createProvenance(messageId, predicate) {
   }
 }
 
+async function publishArgumentMap(messageId) {
+  if (!state.room || !state.federation.enabled || argumentMapForMessage(messageId)) return;
+  const message = state.room.messages.find((item) => item.id === messageId);
+  if (!message || message.author.id !== state.user.id || !federationPublication(messageId)) return;
+  errorAt("roomError");
+  try {
+    const suggestion = await api(`/api/rooms/${state.room.code}/arguments/suggest`, {
+      method: "POST",
+      body: JSON.stringify({ messageId }),
+    });
+    const draft = JSON.stringify(suggestion.structure, null, 2);
+    const edited = prompt(
+      "Private AI suggestion only. Review and edit this JSON before anything becomes public. Node kinds: claim/reason/objection/qualification. Edge predicates: supports/challenges/qualifies.",
+      draft,
+    );
+    if (edited === null) return;
+    let structure;
+    try {
+      structure = JSON.parse(edited);
+    } catch {
+      return errorAt("roomError", "Argument structure must be valid JSON.");
+    }
+    if (!confirm("Publish this argument structure as your signed public interpretation of this utterance? It becomes a separate immutable federation object.")) return;
+    await api(`/api/rooms/${state.room.code}/federation/arguments`, {
+      method: "POST",
+      body: JSON.stringify({ messageId, nodes: structure.nodes, edges: structure.edges || [], approved: true }),
+    });
+    await refreshFederation();
+    renderRoom();
+  } catch (error) {
+    if (error.status === 409 && error.data?.argumentMap) {
+      await refreshFederation();
+      renderRoom();
+      return;
+    }
+    errorAt("roomError", error.message);
+  }
+}
+
 function renderRoom() {
   if (!state.room) return;
   $("#roomTitle").textContent = state.room.name;
@@ -357,6 +403,7 @@ function renderRoom() {
     const publication = federationPublication(message.id);
     const relation = federationRelation(message.id);
     const provenance = provenanceForMessage(message.id);
+    const argumentMap = argumentMapForMessage(message.id);
 
     if (publication) {
       const link = document.createElement("a");
@@ -366,6 +413,16 @@ function renderRoom() {
       link.rel = "noopener noreferrer";
       link.textContent = "Federated · signed URI ↗";
       actions.append(link);
+
+      if (argumentMap) {
+        const mapLink = document.createElement("a");
+        mapLink.className = "federation-link argument-map-link";
+        mapLink.href = argumentMap.mapUri;
+        mapLink.target = "_blank";
+        mapLink.rel = "noopener noreferrer";
+        mapLink.textContent = "Argument map · signed ↗";
+        actions.append(mapLink);
+      }
 
       for (const edge of provenance) {
         const edgeLink = document.createElement("a");
@@ -397,6 +454,15 @@ function renderRoom() {
           actions.append(replacementLink);
         }
       } else if (mine) {
+        if (!argumentMap) {
+          const structureButton = document.createElement("button");
+          structureButton.className = "ghost small argument-action";
+          structureButton.textContent = "Structure…";
+          structureButton.title = "Privately suggest, review, then explicitly publish a signed argument map.";
+          structureButton.addEventListener("click", () => publishArgumentMap(message.id));
+          actions.append(structureButton);
+        }
+
         for (const [predicate, label] of [["cites", "Cite…"], ["supports", "Support…"], ["challenges", "Challenge…"]]) {
           const button = document.createElement("button");
           button.className = "ghost small provenance-action";
