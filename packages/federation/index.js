@@ -1,10 +1,12 @@
 import { createHash, sign, verify } from "node:crypto";
 
-export const FEDERATION_VERSION = "1.1";
-export const SUPPORTED_FEDERATION_VERSIONS = Object.freeze(["1.0", "1.1"]);
+export const FEDERATION_VERSION = "1.2";
+export const SUPPORTED_FEDERATION_VERSIONS = Object.freeze(["1.0", "1.1", "1.2"]);
 export const FEDERATION_TYPE = "federated-committed-utterance";
 export const RETRACTION_TYPE = "federated-retraction";
 export const REVISION_TYPE = "federated-revision";
+export const PROVENANCE_TYPE = "federated-provenance-edge";
+export const PROVENANCE_PREDICATES = Object.freeze(["cites", "supports", "challenges"]);
 export const PROOF_TYPE = "IntentCommitEd25519Signature2026";
 
 export function normalizeIssuer(value) {
@@ -192,6 +194,71 @@ export function verifyFederationRelation(envelope, publicKey) {
   return verifyEnvelopeSignature(envelope, publicKey);
 }
 
+function unsignedProvenanceEdge({ issuer, edgeId, actor, source, target, predicate, note = "", publishedAt, publicKey }) {
+  const base = normalizeIssuer(issuer);
+  const idPart = String(edgeId || "").trim();
+  if (!idPart) throw new Error("Provenance edge id is required.");
+  if (Number.isNaN(Date.parse(publishedAt))) throw new Error("publishedAt must be an ISO-compatible timestamp.");
+  const normalizedPredicate = String(predicate || "").trim().toLowerCase();
+  if (!PROVENANCE_PREDICATES.includes(normalizedPredicate)) {
+    throw new Error(`Provenance predicate must be one of: ${PROVENANCE_PREDICATES.join(", ")}.`);
+  }
+  const normalizedNote = String(note || "").trim();
+  if (normalizedNote.length > 1000) throw new Error("Provenance note is too long.");
+  const sourceUri = canonicalUtteranceUri(source, base);
+  const targetUri = canonicalUtteranceUri(target, base);
+  if (sourceUri === targetUri) throw new Error("A provenance edge must point to a different utterance.");
+  return {
+    protocol: "intent-commit",
+    protocolVersion: "1.0",
+    federationVersion: FEDERATION_VERSION,
+    type: PROVENANCE_TYPE,
+    id: `${base}/federation/provenance/${encodeURIComponent(idPart)}`,
+    issuer: base,
+    publishedAt: String(publishedAt),
+    actor: normalizedActor(actor),
+    source: sourceUri,
+    target: targetUri,
+    predicate: normalizedPredicate,
+    note: normalizedNote,
+    proof: proofFor(base, publicKey),
+  };
+}
+
+export function createFederatedProvenanceEdge({ issuer, edgeId, actor, source, target, predicate, note = "", publishedAt = new Date().toISOString(), privateKey, publicKey }) {
+  if (!privateKey || !publicKey) throw new Error("Federation signing keys are required.");
+  return signedEnvelope(unsignedProvenanceEdge({
+    issuer,
+    edgeId,
+    actor,
+    source,
+    target,
+    predicate,
+    note,
+    publishedAt,
+    publicKey,
+  }), privateKey);
+}
+
+export function verifyFederatedProvenanceEdge(envelope, publicKey) {
+  const errors = [];
+  if (!envelope || typeof envelope !== "object") return { ok: false, errors: ["envelope must be an object"] };
+  if (envelope.protocol !== "intent-commit") errors.push("protocol must be intent-commit");
+  if (!validFederationVersion(envelope.federationVersion)) errors.push("unsupported federationVersion");
+  if (envelope.type !== PROVENANCE_TYPE) errors.push(`type must be ${PROVENANCE_TYPE}`);
+  if (!String(envelope.id || "").startsWith(`${String(envelope.issuer || "")}/federation/provenance/`)) errors.push("id must be a canonical provenance URI");
+  if (!String(envelope.actor?.id || "").trim() || !String(envelope.actor?.displayName || "").trim()) errors.push("actor is required");
+  if (!String(envelope.source || "").trim()) errors.push("source is required");
+  if (!String(envelope.target || "").trim()) errors.push("target is required");
+  if (envelope.source === envelope.target) errors.push("source and target must differ");
+  if (!PROVENANCE_PREDICATES.includes(String(envelope.predicate || ""))) errors.push("predicate is invalid");
+  if (String(envelope.note || "").length > 1000) errors.push("note is too long");
+  if (envelope.proof?.algorithm !== "Ed25519") errors.push("proof.algorithm must be Ed25519");
+  if (envelope.proof?.type !== PROOF_TYPE) errors.push(`proof.type must be ${PROOF_TYPE}`);
+  if (errors.length) return { ok: false, errors };
+  return verifyEnvelopeSignature(envelope, publicKey);
+}
+
 export function createInstanceDescriptor({ issuer, publicKey, protocolVersion = "1.0" }) {
   const base = normalizeIssuer(issuer);
   const fingerprint = publicKeyFingerprint(publicKey);
@@ -211,6 +278,8 @@ export function createInstanceDescriptor({ issuer, publicKey, protocolVersion = 
       utteranceTemplate: `${base}/federation/utterances/{messageId}`,
       relationTemplate: `${base}/federation/utterances/{messageId}/relations`,
       eventTemplate: `${base}/federation/events/{eventId}`,
+      provenanceTemplate: `${base}/federation/provenance/{edgeId}`,
+      graph: `${base}/federation/graph`,
     },
   };
 }
