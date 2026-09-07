@@ -7,7 +7,7 @@
   "properties": {
     "protocol": { "const": "intent-commit" },
     "protocolVersion": { "type": "string" },
-    "federationVersion": { "const": "1.1" },
+    "federationVersion": { "enum": ["1.1", "1.2"] },
     "type": { "enum": ["federated-retraction", "federated-revision"] },
     "id": { "type": "string", "format": "uri" },
     "issuer": { "type": "string", "format": "uri" },
