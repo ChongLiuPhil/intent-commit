@@ -12,6 +12,8 @@ const state = {
     issuer: null,
     publications: [],
     events: [],
+    provenance: [],
+    graphNodes: [],
   },
 };
 
@@ -72,6 +74,13 @@ function resetPrivateWorkspace() {
   $("#commitStep").classList.add("hidden");
 }
 
+function resetFederationState() {
+  state.federation.publications = [];
+  state.federation.events = [];
+  state.federation.provenance = [];
+  state.federation.graphNodes = [];
+}
+
 function renderUser() {
   $("#userBadge").textContent = state.user ? state.user.displayName : "";
   $("#userBadge").classList.toggle("hidden", !state.user);
@@ -127,10 +136,9 @@ async function runMemberAction(button) {
   errorAt("roomError");
   try {
     if (button.dataset.memberAction === "role") {
-      const role = button.dataset.role;
       const data = await api(`/api/rooms/${state.room.code}/members/${encodeURIComponent(userId)}/role`, {
         method: "PATCH",
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({ role: button.dataset.role }),
       });
       state.room = data.room;
       renderRoom();
@@ -168,14 +176,24 @@ function federationRelation(messageId) {
   return state.federation.events.find((item) => item.subjectUri === publication.canonicalUri) || null;
 }
 
+function provenanceForMessage(messageId) {
+  const publication = federationPublication(messageId);
+  if (!publication) return [];
+  return state.federation.provenance.filter((item) => item.sourceUri === publication.canonicalUri);
+}
+
 async function refreshFederation() {
-  state.federation.publications = [];
-  state.federation.events = [];
+  resetFederationState();
   if (!state.room || !state.federation.enabled) return;
   try {
-    const data = await api(`/api/rooms/${state.room.code}/federation`);
-    state.federation.publications = data.publications || [];
-    state.federation.events = data.events || [];
+    const [roomData, graphData] = await Promise.all([
+      api(`/api/rooms/${state.room.code}/federation`),
+      api("/federation/graph"),
+    ]);
+    state.federation.publications = roomData.publications || [];
+    state.federation.events = roomData.events || [];
+    state.federation.provenance = roomData.provenance || [];
+    state.federation.graphNodes = graphData.nodes || [];
   } catch (error) {
     console.error("Could not load federation state", error);
   }
@@ -185,8 +203,7 @@ async function publishToFederation(messageId) {
   if (!state.room || !state.federation.enabled) return;
   const message = state.room.messages.find((item) => item.id === messageId);
   if (!message || message.author.id !== state.user.id) return;
-  const warning = "Publish this committed statement to the federation? This creates a public, signed canonical URI. Copies made by other systems cannot be recalled by deleting this room.";
-  if (!confirm(warning)) return;
+  if (!confirm("Publish this committed statement to the federation? This creates a public, signed canonical URI. Copies made by other systems cannot be recalled by deleting this room.")) return;
   errorAt("roomError");
   try {
     const data = await api(`/api/rooms/${state.room.code}/federation/publish`, {
@@ -194,10 +211,11 @@ async function publishToFederation(messageId) {
       body: JSON.stringify({ messageId, approved: true }),
     });
     state.federation.publications.push(data.publication);
+    await refreshFederation();
     renderRoom();
   } catch (error) {
     if (error.status === 409 && error.data?.publication) {
-      state.federation.publications.push(error.data.publication);
+      await refreshFederation();
       renderRoom();
       return;
     }
@@ -214,11 +232,11 @@ async function retractFederatedMessage(messageId) {
   if (!confirm("Publish a signed retraction? The original utterance remains verifiable; this adds a public statement that you no longer endorse it.")) return;
   errorAt("roomError");
   try {
-    const data = await api(`/api/rooms/${state.room.code}/federation/retract`, {
+    await api(`/api/rooms/${state.room.code}/federation/retract`, {
       method: "POST",
       body: JSON.stringify({ messageId, approved: true, reason }),
     });
-    state.federation.events.push(data.event);
+    await refreshFederation();
     renderRoom();
   } catch (error) {
     errorAt("roomError", error.message);
@@ -246,20 +264,63 @@ async function reviseFederatedMessage(messageId) {
   const choice = prompt(`Choose the already-federated replacement by number:\n\n${menu}`, "1");
   if (choice === null) return;
   const replacement = candidates[Number(choice) - 1];
-  if (!replacement) {
-    errorAt("roomError", "Invalid replacement selection.");
-    return;
-  }
+  if (!replacement) return errorAt("roomError", "Invalid replacement selection.");
   const reason = prompt("Optional public reason for the revision link.", "");
   if (reason === null) return;
   if (!confirm("Publish a signed revision relation? The original remains part of the public record and will point to the replacement utterance.")) return;
   errorAt("roomError");
   try {
-    const data = await api(`/api/rooms/${state.room.code}/federation/revise`, {
+    await api(`/api/rooms/${state.room.code}/federation/revise`, {
       method: "POST",
       body: JSON.stringify({ messageId, replacementMessageId: replacement.id, approved: true, reason }),
     });
-    state.federation.events.push(data.event);
+    await refreshFederation();
+    renderRoom();
+  } catch (error) {
+    errorAt("roomError", error.message);
+  }
+}
+
+async function createProvenance(messageId, predicate) {
+  if (!state.room || !state.federation.enabled || federationRelation(messageId)) return;
+  const message = state.room.messages.find((item) => item.id === messageId);
+  const sourcePublication = federationPublication(messageId);
+  if (!message || message.author.id !== state.user.id || !sourcePublication) return;
+
+  const candidates = state.federation.graphNodes.filter((node) => node.messageId !== messageId);
+  if (!candidates.length) {
+    errorAt("roomError", "A provenance edge needs another already-federated utterance as its target.");
+    return;
+  }
+
+  const menu = candidates.map((node, index) => {
+    const lifecycle = node.lifecycle?.type === "federated-retraction" ? " [retracted]" : node.lifecycle?.type === "federated-revision" ? " [revised]" : "";
+    const author = node.author?.displayName || "Unknown";
+    const statement = String(node.statement || "").replace(/\s+/g, " ");
+    return `${index + 1}. ${author}: ${statement.slice(0, 110)}${statement.length > 110 ? "…" : ""}${lifecycle}`;
+  }).join("\n");
+
+  const choice = prompt(`Choose the public utterance this statement ${predicate}:\n\n${menu}`, "1");
+  if (choice === null) return;
+  const target = candidates[Number(choice) - 1];
+  if (!target) return errorAt("roomError", "Invalid provenance target selection.");
+  const note = prompt(`Optional public note explaining why this statement ${predicate} the target.`, "");
+  if (note === null) return;
+  if (!confirm(`Publish a signed '${predicate}' edge? This is a new public assertion by you about the relationship between two public utterances.`)) return;
+
+  errorAt("roomError");
+  try {
+    await api(`/api/rooms/${state.room.code}/federation/provenance`, {
+      method: "POST",
+      body: JSON.stringify({
+        sourceMessageId: messageId,
+        targetMessageId: target.messageId,
+        predicate,
+        note,
+        approved: true,
+      }),
+    });
+    await refreshFederation();
     renderRoom();
   } catch (error) {
     errorAt("roomError", error.message);
@@ -281,6 +342,7 @@ function renderRoom() {
     root.innerHTML = `<div class="empty-state"><strong>No committed statements yet.</strong><p>Draft privately, reflect, approve, and commit the first one.</p></div>`;
     return;
   }
+
   const template = $("#messageTemplate");
   for (const message of state.room.messages) {
     const node = template.content.cloneNode(true);
@@ -294,6 +356,8 @@ function renderRoom() {
     const actions = node.querySelector(".message-actions");
     const publication = federationPublication(message.id);
     const relation = federationRelation(message.id);
+    const provenance = provenanceForMessage(message.id);
+
     if (publication) {
       const link = document.createElement("a");
       link.className = "federation-link";
@@ -302,6 +366,17 @@ function renderRoom() {
       link.rel = "noopener noreferrer";
       link.textContent = "Federated · signed URI ↗";
       actions.append(link);
+
+      for (const edge of provenance) {
+        const edgeLink = document.createElement("a");
+        edgeLink.className = `federation-link provenance-link predicate-${edge.predicate}`;
+        edgeLink.href = edge.edgeUri;
+        edgeLink.target = "_blank";
+        edgeLink.rel = "noopener noreferrer";
+        edgeLink.textContent = `${edge.predicate} →`;
+        edgeLink.title = edge.targetUri;
+        actions.append(edgeLink);
+      }
 
       if (relation) {
         article.classList.add(relation.type === "federated-retraction" ? "is-retracted" : "is-revised");
@@ -322,6 +397,14 @@ function renderRoom() {
           actions.append(replacementLink);
         }
       } else if (mine) {
+        for (const [predicate, label] of [["cites", "Cite…"], ["supports", "Support…"], ["challenges", "Challenge…"]]) {
+          const button = document.createElement("button");
+          button.className = "ghost small provenance-action";
+          button.textContent = label;
+          button.addEventListener("click", () => createProvenance(message.id, predicate));
+          actions.append(button);
+        }
+
         const retractButton = document.createElement("button");
         retractButton.className = "ghost small";
         retractButton.textContent = "Retract";
@@ -397,8 +480,7 @@ async function refreshMe() {
 async function enterLobby() {
   closeEvents();
   state.room = null;
-  state.federation.publications = [];
-  state.federation.events = [];
+  resetFederationState();
   await refreshMe();
   renderRooms();
   show("lobbyView");
@@ -547,8 +629,7 @@ $("#logoutBtn").addEventListener("click", async () => {
   state.user = null;
   state.rooms = [];
   state.room = null;
-  state.federation.publications = [];
-  state.federation.events = [];
+  resetFederationState();
   renderUser();
   show("authView");
 });
