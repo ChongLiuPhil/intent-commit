@@ -7,7 +7,7 @@
   "properties": {
     "protocol": { "const": "intent-commit" },
     "protocolVersion": { "type": "string" },
-    "federationVersion": { "enum": ["1.0", "1.1", "1.2"] },
+    "federationVersion": { "enum": ["1.0", "1.1", "1.2", "1.3"] },
     "type": { "const": "federated-committed-utterance" },
     "id": { "type": "string", "format": "uri" },
     "issuer": { "type": "string", "format": "uri" },
@@ -15,9 +15,7 @@
     "message": {
       "type": "object",
       "required": ["protocol", "protocolVersion", "type", "state", "id", "room", "author", "statement", "committedAt"],
-      "properties": {
-        "state": { "const": "COMMITTED" }
-      }
+      "properties": { "state": { "const": "COMMITTED" } }
     },
     "proof": {
       "type": "object",
