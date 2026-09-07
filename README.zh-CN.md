@@ -2,61 +2,54 @@
 
 **Think before you commit —— 在表达成为公共话语之前，先确认它真正代表你。**
 
-Intent Commit 是一个面向 **AI 中介的反思式人类交流** 的开放协议与参考客户端。AI 不替人发言，而是在私人草稿与公共表达之间提供一个反思层：帮助说者展开、检查、澄清自己的意思，只有经过本人明确确认的版本才会真正进入公共交流。
+Intent Commit 是一个面向 **AI 中介的反思式人类交流** 的开放协议与参考客户端。AI 不替人发言，而是在私人草稿与公共表达之间提供反思层；只有经过本人明确确认的内容才会成为公共话语。
 
-> 私人草稿 → AI 反思 → 本人澄清 → 本人确认 → Commit → 公共交流
+> 私人草稿 → AI 反思 → 本人澄清 → 本人确认 → Commit → 可选的公开 Federation
 
-## v0.8：签名 Provenance / Citation Graph
+## v0.9：Claims & Argument Structure
 
-v0.8 开始把已经 federate 的公开 utterance 组织成一个**可验证的论证关系图**，但不让 AI 自动替说者判断“这句话支持什么、反驳什么”。
+v0.9 为已经 federate 的 utterance 加入了**由原作者本人确认的细粒度论证结构**。
 
-一个已经公开的 utterance 可以由其原作者主动声明：
-
-```text
-U1 --cites------> U2
-U1 --supports---> U2
-U1 --challenges-> U2
-```
-
-这些边本身也是新的、带 Ed25519 签名的公开 federation object。
-
-核心约束：
-
-- 只有 **source utterance 的原作者** 可以创建这条边；
-- Owner、Moderator、target author 或 AI 都不能替 source author 声称这个关系；
-- source 和 target 都必须已经分别完成 Federation Publication；
-- 因而创建 graph edge 不会偷偷把 room-only 或私人内容公开出去；
-- source 与 target 不能是同一条 utterance；
-- 第一版只允许 `cites / supports / challenges` 三种 predicate；
-- 相同 `(source, target, predicate)` 不允许重复发布；
-- 可选 note 是公开内容，也会进入签名；
-- 修改已签名 edge 会导致验签失败；
-- Federation 1.2 仍兼容验证之前 1.0 / 1.1 的公开 artifact。
-
-## 两类不同的关系
-
-Intent Commit 现在区分：
-
-### 1. Lifecycle relation
+一条公开发言现在可以有这样的内部结构：
 
 ```text
-U1 → RETRACTION(U1)
-U1 → REVISION(U1 → U2)
+reason-1 --------supports-------> claim-1
+objection-1 -----challenges-----> claim-1
+qualification-1 -qualifies------> claim-1
 ```
 
-它回答的是：**作者后来如何重新定位自己过去的公开承诺？**
+节点类型：
 
-### 2. Provenance / argumentative relation
+- `claim`：说者提出的主张或立场；
+- `reason`：说者明确作为支持理由的内容；
+- `objection`：说者明确作为反对或挑战的内容；
+- `qualification`：对另一节点进行限制、条件化或范围缩小的内容。
+
+内部关系：
+
+- `supports`
+- `challenges`
+- `qualifies`
+
+最重要的边界是：**AI 生成的 argument structure 只是私人建议，不是公共事实，也不是说者的新承诺。**
+
+完整流程是：
 
 ```text
-U1 --cites/supports/challenges--> U2
+已经 Federate 的 utterance
+        ↓
+私人 AI structure suggestion
+        ↓
+原作者检查 / 编辑
+        ↓
+再次明确确认
+        ↓
+Signed public argument map
 ```
 
-它回答的是：**source utterance 的作者公开把自己的这句话放在另一条公开 utterance 的什么关系中？**
+如果没有配置 OpenAI API key，demo 模式不会猜测隐藏理由：它只把原始 committed statement 原样放进一个 `claim` 节点，并返回空 edges。
 
-两种 relation 都不会修改原来的 signed utterance。
-
-## 核心交流协议约束
+## 最核心的交流协议约束
 
 ```text
 DRAFT → REFLECTED ↔ CLARIFYING → APPROVED → COMMITTED
@@ -72,7 +65,9 @@ Reflective Agent 的核心原则仍然是：
 
 > **Expand without inventing —— 可以展开，但不能擅自替用户创造理由、事实、立场或承诺。**
 
-## 不同层次的公开授权
+## 不同层次的公共动作
+
+Intent Commit 现在明确区分：
 
 ```text
 Room Commit
@@ -81,25 +76,27 @@ External Adapter Publication
     ≠
 Federation Publication
     ≠
-Federation Retraction / Revision
+Retraction / Revision
     ≠
-Provenance Assertion
+Provenance Relation
+    ≠
+Argument-Map Publication
 ```
 
-扩大受众、修改自己对过去发言的立场、或公开声明论证关系，都需要新的明确人类动作。
+扩大受众、改变旧立场、声明自己与另一公开 utterance 的关系、或者公开一条 utterance 的内部论证结构，都必须是新的明确人类动作。
 
-## Protocol / Federation Package
+## Federation v1.3
 
-基础协议：
+Federation 使用持久化 Ed25519 实例身份。当前实现可以验证 federation `1.0` 到 `1.3` 的对象。
 
-```text
-packages/protocol/
-```
-
-Federation 签名与验证：
+公共对象类型现在包括：
 
 ```text
-packages/federation/
+federated-committed-utterance
+federated-retraction
+federated-revision
+federated-provenance-edge
+federated-argument-map
 ```
 
 JSON Schema：
@@ -108,15 +105,62 @@ JSON Schema：
 packages/federation/schemas/federated-utterance.schema.json
 packages/federation/schemas/federation-relation.schema.json
 packages/federation/schemas/provenance-edge.schema.json
+packages/federation/schemas/argument-map.schema.json
 ```
 
 详细说明：
 
-- `docs/protocol-package.md`
 - `docs/federation.md`
-- `docs/provenance.md`
+- `docs/argument-structure.md`
+- `docs/protocol-package.md`
 
-## Federation v1.2 公共 API
+## 三种不同的 Graph 语义
+
+Intent Commit 刻意把三种关系分开。
+
+生命周期：
+
+```text
+U1 → RETRACTION(U1)
+U1 → REVISION(U1 → U2)
+```
+
+不同公开 utterance 之间的 provenance：
+
+```text
+U1 --cites------> U2
+U1 --supports---> U2
+U1 --challenges-> U2
+```
+
+一条 utterance 内部的 argument structure：
+
+```text
+reason-1 --supports--> claim-1
+```
+
+因此，“我后来撤回这句话”“我的这句话支持你的那句话”和“这句话里的 A 是 B 的理由”不会被实现层混成同一种 edge。
+
+## Argument Map 的约束
+
+服务端会独立检查：
+
+- 只有原作者本人可以发布；
+- subject 必须已经单独 Federate；
+- 必须有 `approved: true`；
+- 至少包含一个 `claim`；
+- 1–32 个节点，最多 64 条内部 edge；
+- node ID 必须唯一；
+- edge 必须引用存在且不同的节点；
+- `reason` 只能产生 `supports`；
+- `objection` 只能产生 `challenges`；
+- `qualification` 只能产生 `qualifies`；
+- 完全重复的内部 edge 会被拒绝；
+- v0.9 中每条 federated utterance 最多一个公开 argument map。
+
+Signed argument map 发布后不可就地修改。如果说者的实质立场发生变化，应当使用已有 revision 机制产生新的 committed / federated utterance，再为新 utterance 建立新的 map。
+
+## Federation API
 
 实例发现：
 
@@ -124,138 +168,89 @@ packages/federation/schemas/provenance-edge.schema.json
 GET /.well-known/intent-commit
 ```
 
-公开签名 utterance：
-
-```text
-GET /federation/utterances/:messageId
-```
-
-查看 lifecycle + provenance relation：
-
-```text
-GET /federation/utterances/:messageId/relations
-```
-
-读取 signed retraction / revision event：
-
-```text
-GET /federation/events/:eventId
-```
-
-读取 signed provenance edge：
-
-```text
-GET /federation/provenance/:edgeId
-```
-
-读取当前实例全部公开 graph：
+公开 graph：
 
 ```text
 GET /federation/graph
 ```
 
-## 创建 Provenance Edge
-
-作者在已登录状态下使用：
+公开 utterance 与关系：
 
 ```text
-POST /api/rooms/:code/federation/provenance
+GET /federation/utterances/:messageId
+GET /federation/utterances/:messageId/relations
+```
+
+独立读取 signed object：
+
+```text
+GET /federation/events/:eventId
+GET /federation/provenance/:edgeId
+GET /federation/arguments/:mapId
+```
+
+私人 structure suggestion：
+
+```text
+POST /api/rooms/:code/arguments/suggest
+```
+
+作者确认后的公开 argument map：
+
+```text
+POST /api/rooms/:code/federation/arguments
 ```
 
 请求示例：
 
 ```json
 {
-  "sourceMessageId": "source-message-id",
-  "targetMessageId": "target-message-id",
-  "predicate": "challenges",
-  "note": "这条发言质疑 target 中使用的一个前提。",
+  "messageId": "message-id",
+  "nodes": [
+    { "id": "claim-1", "kind": "claim", "text": "..." },
+    { "id": "reason-1", "kind": "reason", "text": "..." }
+  ],
+  "edges": [
+    { "source": "reason-1", "target": "claim-1", "predicate": "supports" }
+  ],
   "approved": true
 }
 ```
 
-服务端会重新检查：
+## Reference Client
+
+当前登录用户自己的 federated utterance 会出现：
 
 ```text
-source 已 Federate
-+
-target 已 Federate
-+
-当前用户 = source 原作者
-+
-approved = true
-```
-
-Reference Client 中，符合条件的本人 federated message 会出现：
-
-```text
+Structure…
 Cite…
 Support…
 Challenge…
+Retract
+Revise…
 ```
 
-## 为什么不让 AI 自动生成这些边
+`Structure…` 是两阶段流程：
 
-AI 可以帮助用户理解可能存在的理由或关联，但 `supports` 或 `challenges` 本身是一种新的公共立场。
+1. 服务器返回一个私人 AI/demo 建议；
+2. 用户检查并可以修改 JSON，然后进行独立的公开确认。
 
-如果系统自动生成：
-
-```text
-U1 supports U2
-```
-
-这就不仅是在“分析”用户的话，而是在替用户新增一个可归责的公共承诺。
-
-因此 v0.8 把 graph edge 当成新的 human-authorized speech act，而不是模型推断结果。
-
-## Federation 配置
-
-Federation 默认关闭：
-
-```env
-FEDERATION_ENABLED=true
-PUBLIC_BASE_URL=https://intent.example.org
-FEDERATION_PRIVATE_KEY_PATH=./data/federation-private.pem
-FEDERATION_PUBLIC_KEY_PATH=./data/federation-public.pem
-```
-
-生产环境应使用 HTTPS 和稳定的 `PUBLIC_BASE_URL`。私钥代表部署实例的长期 federation identity，应当备份并妥善保护。
-
-## GitHub Issues Adapter
-
-GitHub adapter 继续保留：
-
-```text
-packages/adapters-github/
-```
-
-服务端配置：
-
-```env
-GITHUB_TOKEN=...
-```
-
-发布接口：
-
-```text
-POST /api/rooms/:code/adapters/github/issues/:issueNumber/publish
-```
+真正发布后，消息会显示稳定的 **Argument map · signed** URI，而不是继续把 map 当作可随意编辑的数据。
 
 ## 数据与隐私边界
 
 普通 room persistence 保存：账户、密码 hash、session hash、room、membership、role 与 committed statement。
 
-不会作为 room discourse 保存：raw draft、clarification、Intent Card、尚未确认的 proposed statement。
+不会作为公共 discourse 保存：raw draft、clarification、Intent Card、尚未确认的 reformulation、私人 AI argument suggestion。
 
-公开 federation artifact 分开保存：
+公开 federation artifact 独立保存：
 
 ```text
-federation_publications  已签名公开 utterance
-federation_events        已签名 retraction / revision
-provenance_edges          已签名 cites / supports / challenges edge
+federation_publications  signed utterances
+federation_events        signed retractions / revisions
+provenance_edges          signed cross-utterance relations
+argument_maps             signed intra-utterance structures
 ```
-
-创建 provenance edge 不会让任何用户获得别人私人 Reflective Workspace 的访问权。
 
 ## 本地运行
 
@@ -266,11 +261,30 @@ cp .env.example .env
 npm start
 ```
 
+打开：`http://localhost:3000`
+
+可选配置：
+
+```env
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5.6-luna
+DATABASE_PATH=./data/intent-commit.sqlite
+SESSION_TTL_DAYS=30
+COOKIE_SECURE=false
+GITHUB_TOKEN=
+FEDERATION_ENABLED=false
+PUBLIC_BASE_URL=
+FEDERATION_PRIVATE_KEY_PATH=./data/federation-private.pem
+FEDERATION_PUBLIC_KEY_PATH=./data/federation-public.pem
+```
+
 Docker：
 
 ```bash
 docker compose up --build
 ```
+
+SQLite 与 federation identity keys 会保存在 `intent_commit_data` volume 中。
 
 ## 测试
 
@@ -278,11 +292,13 @@ docker compose up --build
 npm test
 ```
 
-测试包括：协议状态迁移、Federation 签名与 tamper detection、retraction / revision、provenance edge 签名、self-edge 禁止、graph incoming/outgoing index、重复 edge 拒绝、账户/session、room governance、SQLite persistence 与 GitHub adapter。
+测试会先检查 server 与 browser JavaScript 语法，再验证：协议状态迁移、账户/session persistence、room governance、Federation 签名与 tamper detection、retraction/revision、provenance、argument-map validation/signature/uniqueness、demo suggestion 的 non-invention、GitHub adapter 与 external publication audit。
 
 ## 当前边界
 
-v0.8 仍然只支持**同一 Intent Commit 实例内部**的 provenance target。服务器不会主动抓取任意远程 URL，也还没有 remote inbox、following、ActivityPub compatibility、跨实例 identity binding、remote delivery replay protection、正式 database migration、rate limiting、password recovery 或多进程 realtime fan-out。
+v0.9 仍然是 **verifiable outbound federation**，还不是完整 federated social network。
+
+目前没有：remote inbox、following、ActivityPub compatibility、inbound federation、跨实例 identity binding、remote delivery replay protection、argument-map correction event、正式 database migrations、rate limiting、password recovery、多进程 realtime fan-out。
 
 ## License
 
