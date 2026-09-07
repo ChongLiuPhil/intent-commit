@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intent-commit.dev/schemas/provenance-edge.schema.json",
+  "title": "Intent Commit Federated Provenance Edge",
+  "type": "object",
+  "required": ["protocol", "protocolVersion", "federationVersion", "type", "id", "issuer", "publishedAt", "actor", "source", "target", "predicate", "note", "proof"],
+  "properties": {
+    "protocol": { "const": "intent-commit" },
+    "protocolVersion": { "type": "string" },
+    "federationVersion": { "const": "1.2" },
+    "type": { "const": "federated-provenance-edge" },
+    "id": { "type": "string", "format": "uri" },
+    "issuer": { "type": "string", "format": "uri" },
+    "publishedAt": { "type": "string", "format": "date-time" },
+    "actor": {
+      "type": "object",
+      "required": ["id", "displayName"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "source": { "type": "string", "format": "uri" },
+    "target": { "type": "string", "format": "uri" },
+    "predicate": { "enum": ["cites", "supports", "challenges"] },
+    "note": { "type": "string", "maxLength": 1000 },
+    "proof": {
+      "type": "object",
+      "required": ["type", "algorithm", "keyId", "signature"],
+      "properties": {
+        "type": { "const": "IntentCommitEd25519Signature2026" },
+        "algorithm": { "const": "Ed25519" },
+        "keyId": { "type": "string", "format": "uri-reference" },
+        "signature": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
