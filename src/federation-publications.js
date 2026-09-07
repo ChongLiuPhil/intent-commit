@@ -19,6 +19,7 @@ export function createFederationPublicationStore(db, { now = () => new Date().to
     VALUES (?, ?, ?, ?, ?, ?, ?)`);
   const byMessage = db.prepare("SELECT * FROM federation_publications WHERE message_id = ?");
   const byRoom = db.prepare("SELECT * FROM federation_publications WHERE room_code = ? ORDER BY published_at ASC, rowid ASC");
+  const all = db.prepare("SELECT * FROM federation_publications ORDER BY published_at ASC, rowid ASC");
 
   function map(row) {
     if (!row) return null;
@@ -51,6 +52,7 @@ export function createFederationPublicationStore(db, { now = () => new Date().to
 
   function getByMessageId(messageId) { return map(byMessage.get(String(messageId || ""))); }
   function listByRoom(roomCode) { return byRoom.all(String(roomCode || "").toUpperCase()).map(map); }
+  function listAll() { return all.all().map(map); }
 
-  return { record, getByMessageId, listByRoom };
+  return { record, getByMessageId, listByRoom, listAll };
 }
