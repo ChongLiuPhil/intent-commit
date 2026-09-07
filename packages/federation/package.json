@@ -1,7 +1,7 @@
 {
   "name": "@intent-commit/federation",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Verifiable federation primitives for signed Intent Commit utterances, retractions, and revisions."
+  "description": "Verifiable federation primitives for signed Intent Commit utterances, lifecycle relations, and provenance graph edges."
 }
