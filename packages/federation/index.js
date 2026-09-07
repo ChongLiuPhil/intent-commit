@@ -1,12 +1,15 @@
 import { createHash, sign, verify } from "node:crypto";
 
-export const FEDERATION_VERSION = "1.2";
-export const SUPPORTED_FEDERATION_VERSIONS = Object.freeze(["1.0", "1.1", "1.2"]);
+export const FEDERATION_VERSION = "1.3";
+export const SUPPORTED_FEDERATION_VERSIONS = Object.freeze(["1.0", "1.1", "1.2", "1.3"]);
 export const FEDERATION_TYPE = "federated-committed-utterance";
 export const RETRACTION_TYPE = "federated-retraction";
 export const REVISION_TYPE = "federated-revision";
 export const PROVENANCE_TYPE = "federated-provenance-edge";
 export const PROVENANCE_PREDICATES = Object.freeze(["cites", "supports", "challenges"]);
+export const ARGUMENT_MAP_TYPE = "federated-argument-map";
+export const ARGUMENT_NODE_KINDS = Object.freeze(["claim", "reason", "objection", "qualification"]);
+export const ARGUMENT_EDGE_PREDICATES = Object.freeze(["supports", "challenges", "qualifies"]);
 export const PROOF_TYPE = "IntentCommitEd25519Signature2026";
 
 export function normalizeIssuer(value) {
@@ -150,31 +153,12 @@ function unsignedRelation({ type, issuer, eventId, actor, subject, replacement =
 
 export function createFederatedRetraction({ issuer, eventId, actor, subject, reason = "", publishedAt = new Date().toISOString(), privateKey, publicKey }) {
   if (!privateKey || !publicKey) throw new Error("Federation signing keys are required.");
-  return signedEnvelope(unsignedRelation({
-    type: RETRACTION_TYPE,
-    issuer,
-    eventId,
-    actor,
-    subject,
-    reason,
-    publishedAt,
-    publicKey,
-  }), privateKey);
+  return signedEnvelope(unsignedRelation({ type: RETRACTION_TYPE, issuer, eventId, actor, subject, reason, publishedAt, publicKey }), privateKey);
 }
 
 export function createFederatedRevision({ issuer, eventId, actor, subject, replacement, reason = "", publishedAt = new Date().toISOString(), privateKey, publicKey }) {
   if (!privateKey || !publicKey) throw new Error("Federation signing keys are required.");
-  return signedEnvelope(unsignedRelation({
-    type: REVISION_TYPE,
-    issuer,
-    eventId,
-    actor,
-    subject,
-    replacement,
-    reason,
-    publishedAt,
-    publicKey,
-  }), privateKey);
+  return signedEnvelope(unsignedRelation({ type: REVISION_TYPE, issuer, eventId, actor, subject, replacement, reason, publishedAt, publicKey }), privateKey);
 }
 
 export function verifyFederationRelation(envelope, publicKey) {
@@ -227,17 +211,7 @@ function unsignedProvenanceEdge({ issuer, edgeId, actor, source, target, predica
 
 export function createFederatedProvenanceEdge({ issuer, edgeId, actor, source, target, predicate, note = "", publishedAt = new Date().toISOString(), privateKey, publicKey }) {
   if (!privateKey || !publicKey) throw new Error("Federation signing keys are required.");
-  return signedEnvelope(unsignedProvenanceEdge({
-    issuer,
-    edgeId,
-    actor,
-    source,
-    target,
-    predicate,
-    note,
-    publishedAt,
-    publicKey,
-  }), privateKey);
+  return signedEnvelope(unsignedProvenanceEdge({ issuer, edgeId, actor, source, target, predicate, note, publishedAt, publicKey }), privateKey);
 }
 
 export function verifyFederatedProvenanceEdge(envelope, publicKey) {
@@ -253,6 +227,94 @@ export function verifyFederatedProvenanceEdge(envelope, publicKey) {
   if (envelope.source === envelope.target) errors.push("source and target must differ");
   if (!PROVENANCE_PREDICATES.includes(String(envelope.predicate || ""))) errors.push("predicate is invalid");
   if (String(envelope.note || "").length > 1000) errors.push("note is too long");
+  if (envelope.proof?.algorithm !== "Ed25519") errors.push("proof.algorithm must be Ed25519");
+  if (envelope.proof?.type !== PROOF_TYPE) errors.push(`proof.type must be ${PROOF_TYPE}`);
+  if (errors.length) return { ok: false, errors };
+  return verifyEnvelopeSignature(envelope, publicKey);
+}
+
+export function normalizeArgumentMapContent({ nodes, edges = [] } = {}) {
+  if (!Array.isArray(nodes) || nodes.length < 1 || nodes.length > 32) {
+    throw new Error("Argument map must contain 1-32 nodes.");
+  }
+  if (!Array.isArray(edges) || edges.length > 64) throw new Error("Argument map may contain at most 64 edges.");
+
+  const normalizedNodes = [];
+  const nodeById = new Map();
+  for (const raw of nodes) {
+    const id = String(raw?.id || "").trim();
+    const kind = String(raw?.kind || "").trim().toLowerCase();
+    const text = String(raw?.text || "").trim();
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(id)) throw new Error("Argument node id must use 1-64 letters, numbers, dot, underscore, or hyphen.");
+    if (nodeById.has(id)) throw new Error("Argument node ids must be unique.");
+    if (!ARGUMENT_NODE_KINDS.includes(kind)) throw new Error(`Argument node kind must be one of: ${ARGUMENT_NODE_KINDS.join(", ")}.`);
+    if (!text || text.length > 2000) throw new Error("Argument node text must be 1-2000 characters.");
+    const node = { id, kind, text };
+    normalizedNodes.push(node);
+    nodeById.set(id, node);
+  }
+  if (!normalizedNodes.some((node) => node.kind === "claim")) throw new Error("Argument map must contain at least one claim node.");
+
+  const seenEdges = new Set();
+  const normalizedEdges = edges.map((raw) => {
+    const source = String(raw?.source || "").trim();
+    const target = String(raw?.target || "").trim();
+    const predicate = String(raw?.predicate || "").trim().toLowerCase();
+    if (!nodeById.has(source) || !nodeById.has(target)) throw new Error("Argument edges must reference existing node ids.");
+    if (source === target) throw new Error("Argument edge source and target must differ.");
+    if (!ARGUMENT_EDGE_PREDICATES.includes(predicate)) throw new Error(`Argument edge predicate must be one of: ${ARGUMENT_EDGE_PREDICATES.join(", ")}.`);
+    const sourceKind = nodeById.get(source).kind;
+    if (sourceKind === "reason" && predicate !== "supports") throw new Error("Reason nodes may only create supports edges.");
+    if (sourceKind === "objection" && predicate !== "challenges") throw new Error("Objection nodes may only create challenges edges.");
+    if (sourceKind === "qualification" && predicate !== "qualifies") throw new Error("Qualification nodes may only create qualifies edges.");
+    const key = `${source}\u0000${target}\u0000${predicate}`;
+    if (seenEdges.has(key)) throw new Error("Argument map contains a duplicate edge.");
+    seenEdges.add(key);
+    return { source, target, predicate };
+  });
+
+  return { nodes: normalizedNodes, edges: normalizedEdges };
+}
+
+function unsignedArgumentMap({ issuer, mapId, actor, subject, nodes, edges, publishedAt, publicKey }) {
+  const base = normalizeIssuer(issuer);
+  const idPart = String(mapId || "").trim();
+  if (!idPart) throw new Error("Argument map id is required.");
+  if (Number.isNaN(Date.parse(publishedAt))) throw new Error("publishedAt must be an ISO-compatible timestamp.");
+  return {
+    protocol: "intent-commit",
+    protocolVersion: "1.0",
+    federationVersion: FEDERATION_VERSION,
+    type: ARGUMENT_MAP_TYPE,
+    id: `${base}/federation/arguments/${encodeURIComponent(idPart)}`,
+    issuer: base,
+    publishedAt: String(publishedAt),
+    actor: normalizedActor(actor),
+    subject: canonicalUtteranceUri(subject, base),
+    structure: normalizeArgumentMapContent({ nodes, edges }),
+    proof: proofFor(base, publicKey),
+  };
+}
+
+export function createFederatedArgumentMap({ issuer, mapId, actor, subject, nodes, edges = [], publishedAt = new Date().toISOString(), privateKey, publicKey }) {
+  if (!privateKey || !publicKey) throw new Error("Federation signing keys are required.");
+  return signedEnvelope(unsignedArgumentMap({ issuer, mapId, actor, subject, nodes, edges, publishedAt, publicKey }), privateKey);
+}
+
+export function verifyFederatedArgumentMap(envelope, publicKey) {
+  const errors = [];
+  if (!envelope || typeof envelope !== "object") return { ok: false, errors: ["envelope must be an object"] };
+  if (envelope.protocol !== "intent-commit") errors.push("protocol must be intent-commit");
+  if (!validFederationVersion(envelope.federationVersion)) errors.push("unsupported federationVersion");
+  if (envelope.type !== ARGUMENT_MAP_TYPE) errors.push(`type must be ${ARGUMENT_MAP_TYPE}`);
+  if (!String(envelope.id || "").startsWith(`${String(envelope.issuer || "")}/federation/arguments/`)) errors.push("id must be a canonical argument-map URI");
+  if (!String(envelope.actor?.id || "").trim() || !String(envelope.actor?.displayName || "").trim()) errors.push("actor is required");
+  if (!String(envelope.subject || "").trim()) errors.push("subject is required");
+  try {
+    normalizeArgumentMapContent(envelope.structure || {});
+  } catch (error) {
+    errors.push(error.message);
+  }
   if (envelope.proof?.algorithm !== "Ed25519") errors.push("proof.algorithm must be Ed25519");
   if (envelope.proof?.type !== PROOF_TYPE) errors.push(`proof.type must be ${PROOF_TYPE}`);
   if (errors.length) return { ok: false, errors };
@@ -279,6 +341,7 @@ export function createInstanceDescriptor({ issuer, publicKey, protocolVersion = 
       relationTemplate: `${base}/federation/utterances/{messageId}/relations`,
       eventTemplate: `${base}/federation/events/{eventId}`,
       provenanceTemplate: `${base}/federation/provenance/{edgeId}`,
+      argumentMapTemplate: `${base}/federation/arguments/{mapId}`,
       graph: `${base}/federation/graph`,
     },
   };
