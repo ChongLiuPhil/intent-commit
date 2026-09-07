@@ -4,11 +4,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { demoReflect } from "./src/reflector.js";
 import { reflectWithOpenAI } from "./src/openai.js";
+import { demoSuggestArgumentStructure, suggestArgumentStructureWithOpenAI } from "./src/argument-suggestions.js";
 import { createPersistentStore } from "./src/store.js";
 import { createExternalPublicationStore } from "./src/external-publications.js";
 import { createFederationPublicationStore } from "./src/federation-publications.js";
 import { createFederationEventStore } from "./src/federation-events.js";
 import { createProvenanceEdgeStore } from "./src/provenance-edges.js";
+import { createArgumentMapStore } from "./src/argument-maps.js";
 import { ensureFederationIdentity } from "./src/federation-identity.js";
 import { createCommittedMessage, PROTOCOL_VERSION } from "./packages/protocol/index.js";
 import { normalizeRepository, publishIssueComment } from "./packages/adapters-github/index.js";
@@ -17,6 +19,7 @@ import {
   createFederatedRetraction,
   createFederatedRevision,
   createFederatedProvenanceEdge,
+  createFederatedArgumentMap,
   createInstanceDescriptor,
   FEDERATION_VERSION,
   RETRACTION_TYPE,
@@ -61,6 +64,7 @@ const externalPublications = createExternalPublicationStore(store._db);
 const federationPublications = createFederationPublicationStore(store._db);
 const federationEvents = createFederationEventStore(store._db);
 const provenanceEdges = createProvenanceEdgeStore(store._db);
+const argumentMaps = createArgumentMapStore(store._db);
 const federationIdentity = federationEnabled
   ? ensureFederationIdentity({ privateKeyPath: federationPrivateKeyPath, publicKeyPath: federationPublicKeyPath })
   : null;
@@ -100,9 +104,7 @@ function parseCookies(req) {
   return cookies;
 }
 
-function sessionToken(req) {
-  return parseCookies(req).intent_commit_session || "";
-}
+function sessionToken(req) { return parseCookies(req).intent_commit_session || ""; }
 
 function sessionCookie(token, expiresAt) {
   const maxAge = Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
@@ -120,16 +122,14 @@ function clearSessionCookie() {
   return ["intent_commit_session=", "HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=0", cookieSecure ? "Secure" : ""].filter(Boolean).join("; ");
 }
 
-function requireAuth(req) {
-  return store.authenticate(sessionToken(req)).user;
-}
+function requireAuth(req) { return store.authenticate(sessionToken(req)).user; }
 
 function statusFor(error) {
   const message = String(error?.message || "");
   if (/Authentication required|Invalid room session/i.test(message)) return 401;
   if (/not a member|permission|only the room owner|owner must transfer|original author/i.test(message)) return 403;
   if (/not found/i.test(message)) return 404;
-  if (/already registered|already been published|already has a direct|already exists|revision would create a cycle|provenance edge already exists/i.test(message)) return 409;
+  if (/already registered|already been published|already has a direct|already exists|revision would create a cycle|provenance edge already exists|already has an argument map/i.test(message)) return 409;
   return 400;
 }
 
@@ -200,6 +200,16 @@ function provenanceEdgeSummary(item) {
   };
 }
 
+function argumentMapSummary(item) {
+  return {
+    id: item.id,
+    messageId: item.messageId,
+    subjectUri: item.subjectUri,
+    mapUri: item.mapUri,
+    publishedAt: item.publishedAt,
+  };
+}
+
 function ensureRevisionDoesNotCycle(subjectUri, replacementUri) {
   let cursor = replacementUri;
   const visited = new Set();
@@ -220,7 +230,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && pathname === "/api/health") {
     return sendJson(res, 200, {
       ok: true,
-      version: "0.8.0",
+      version: "0.9.0",
       protocolVersion: PROTOCOL_VERSION,
       federation: { enabled: federationEnabled, version: FEDERATION_VERSION, issuer: federationIssuer },
       persistence: "sqlite",
@@ -241,6 +251,7 @@ const server = http.createServer(async (req, res) => {
     if (!federationEnabled) return sendJson(res, 404, { error: "Federation is disabled on this instance." });
     const nodes = federationPublications.listAll().map((item) => {
       const lifecycle = federationEvents.getBySubject(item.canonicalUri);
+      const argumentMap = argumentMaps.getBySubject(item.canonicalUri);
       return {
         id: item.canonicalUri,
         messageId: item.messageId,
@@ -249,6 +260,7 @@ const server = http.createServer(async (req, res) => {
         committedAt: item.envelope.message.committedAt,
         publishedAt: item.publishedAt,
         lifecycle: lifecycle ? federationEventSummary(lifecycle) : null,
+        argumentMap: argumentMap ? argumentMapSummary(argumentMap) : null,
       };
     });
     return sendJson(res, 200, {
@@ -256,7 +268,19 @@ const server = http.createServer(async (req, res) => {
       federationVersion: FEDERATION_VERSION,
       nodes,
       edges: provenanceEdges.listAll().map((item) => item.envelope),
+      argumentMaps: argumentMaps.listAll().map((item) => item.envelope),
     }, { "Content-Type": "application/intent-commit+json; charset=utf-8", "Cache-Control": "public, max-age=120" });
+  }
+
+  const publicArgumentMapMatch = pathname.match(/^\/federation\/arguments\/([^/]+)$/);
+  if (req.method === "GET" && publicArgumentMapMatch) {
+    if (!federationEnabled) return sendJson(res, 404, { error: "Federation is disabled on this instance." });
+    const argumentMap = argumentMaps.getById(decodeURIComponent(publicArgumentMapMatch[1]));
+    if (!argumentMap) return sendJson(res, 404, { error: "Argument map not found." });
+    return sendJson(res, 200, argumentMap.envelope, {
+      "Content-Type": "application/intent-commit+json; charset=utf-8",
+      "Cache-Control": "public, max-age=300",
+    });
   }
 
   const publicProvenanceMatch = pathname.match(/^\/federation\/provenance\/([^/]+)$/);
@@ -276,6 +300,7 @@ const server = http.createServer(async (req, res) => {
     const publication = federationPublications.getByMessageId(decodeURIComponent(publicRelationsMatch[1]));
     if (!publication) return sendJson(res, 404, { error: "Federated utterance not found." });
     const lifecycle = federationEvents.getBySubject(publication.canonicalUri);
+    const argumentMap = argumentMaps.getBySubject(publication.canonicalUri);
     return sendJson(res, 200, {
       subject: publication.canonicalUri,
       relations: lifecycle ? [lifecycle.envelope] : [],
@@ -283,6 +308,7 @@ const server = http.createServer(async (req, res) => {
         outgoing: provenanceEdges.listOutgoing(publication.canonicalUri).map((item) => item.envelope),
         incoming: provenanceEdges.listIncoming(publication.canonicalUri).map((item) => item.envelope),
       },
+      argumentMap: argumentMap ? argumentMap.envelope : null,
     }, { "Content-Type": "application/intent-commit+json; charset=utf-8", "Cache-Control": "public, max-age=120" });
   }
 
@@ -444,6 +470,7 @@ const server = http.createServer(async (req, res) => {
         publications: federationPublications.listByRoom(federationListMatch[1]).map(federationPublicationSummary),
         events: federationEvents.listByRoom(federationListMatch[1]).map(federationEventSummary),
         provenance: provenanceEdges.listByRoom(federationListMatch[1]).map(provenanceEdgeSummary),
+        argumentMaps: argumentMaps.listByRoom(federationListMatch[1]).map(argumentMapSummary),
       });
     } catch (error) {
       return sendJson(res, statusFor(error), { error: error.message });
@@ -580,6 +607,62 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  const argumentSuggestMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/arguments\/suggest$/);
+  if (req.method === "POST" && argumentSuggestMatch) {
+    try {
+      const user = requireAuth(req);
+      const body = await readJson(req);
+      const room = store.roomSnapshot(argumentSuggestMatch[1], user.id);
+      const messageId = String(body.messageId || "").trim();
+      const message = room.messages.find((item) => item.id === messageId);
+      if (!message) return sendJson(res, 404, { error: "Committed message not found." });
+      if (message.author.id !== user.id) return sendJson(res, 403, { error: "Only the original author may request a private argument-structure suggestion for this utterance." });
+      const publication = federationPublications.getByMessageId(messageId);
+      if (!publication || publication.roomCode !== room.code) return sendJson(res, 400, { error: "The utterance must first be independently published to federation." });
+      if (argumentMaps.getByMessageId(messageId)) return sendJson(res, 409, { error: "This federated utterance already has an argument map." });
+      const structure = process.env.OPENAI_API_KEY
+        ? await suggestArgumentStructureWithOpenAI({ statement: message.statement })
+        : demoSuggestArgumentStructure(message.statement);
+      return sendJson(res, 200, { mode: process.env.OPENAI_API_KEY ? "openai" : "demo", structure });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error?.message || "Argument-structure suggestion failed." });
+    }
+  }
+
+  const argumentPublishMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/federation\/arguments$/);
+  if (req.method === "POST" && argumentPublishMatch) {
+    try {
+      const user = requireAuth(req);
+      if (!federationEnabled) return sendJson(res, 503, { error: "Federation is not configured on this server." });
+      const body = await readJson(req);
+      if (body.approved !== true) return sendJson(res, 400, { error: "Explicit argument-map publication approval is required." });
+      const room = store.roomSnapshot(argumentPublishMatch[1], user.id);
+      const messageId = String(body.messageId || "").trim();
+      const message = room.messages.find((item) => item.id === messageId);
+      if (!message) return sendJson(res, 404, { error: "Committed message not found." });
+      if (message.author.id !== user.id) return sendJson(res, 403, { error: "Only the original author may publish an argument map for this utterance." });
+      const publication = federationPublications.getByMessageId(messageId);
+      if (!publication || publication.roomCode !== room.code) return sendJson(res, 400, { error: "The utterance must first be independently published to federation." });
+      const existing = argumentMaps.getByMessageId(messageId);
+      if (existing) return sendJson(res, 409, { error: "This federated utterance already has an argument map.", argumentMap: argumentMapSummary(existing) });
+      const mapId = argumentMaps.nextId();
+      const envelope = createFederatedArgumentMap({
+        issuer: federationIssuer,
+        mapId,
+        actor: message.author,
+        subject: publication.canonicalUri,
+        nodes: body.nodes,
+        edges: body.edges,
+        privateKey: federationIdentity.privateKey,
+        publicKey: federationIdentity.publicKey,
+      });
+      const argumentMap = argumentMaps.record({ id: mapId, messageId, roomCode: room.code, authorUserId: user.id, envelope });
+      return sendJson(res, 201, { argumentMap: argumentMapSummary(argumentMap), envelope });
+    } catch (error) {
+      return sendJson(res, statusFor(error), { error: error.message });
+    }
+  }
+
   const githubPublishMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/adapters\/github\/issues\/(\d+)\/publish$/);
   if (req.method === "POST" && githubPublishMatch) {
     try {
@@ -709,7 +792,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Intent Commit v0.8 running at http://localhost:${port}`);
+  console.log(`Intent Commit v0.9 running at http://localhost:${port}`);
   console.log(`Protocol: ${PROTOCOL_VERSION}`);
   console.log(`SQLite: ${databasePath}`);
   console.log(process.env.OPENAI_API_KEY ? "Reflection mode: OpenAI" : "Reflection mode: deterministic demo");
