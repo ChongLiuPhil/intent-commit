@@ -1,0 +1,28 @@
+{
+  "canonicalizationVersion": "IC-C14N/1",
+  "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAA6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=\n-----END PUBLIC KEY-----\n",
+  "canonicalization": {
+    "input": { "z": "last", "a": { "β": "beta", "a": "first" }, "list": [true, null, "x"] },
+    "expected": "{\"a\":{\"a\":\"first\",\"β\":\"beta\"},\"list\":[true,null,\"x\"],\"z\":\"last\"}"
+  },
+  "signedUtterance": {
+    "protocol": "intent-commit",
+    "protocolVersion": "1.0",
+    "federationVersion": "1.3",
+    "type": "federated-committed-utterance",
+    "id": "https://example.test/federation/utterances/msg-001",
+    "issuer": "https://example.test",
+    "publishedAt": "2026-01-02T03:05:06.000Z",
+    "message": {
+      "protocol": "intent-commit", "protocolVersion": "1.0", "type": "committed-message", "state": "COMMITTED",
+      "id": "msg-001", "room": { "code": "DEMO01" }, "author": { "id": "user-001", "displayName": "Alice" },
+      "statement": "Meaning before transmission.", "committedAt": "2026-01-02T03:04:05.000Z"
+    },
+    "proof": {
+      "type": "IntentCommitEd25519Signature2026", "algorithm": "Ed25519",
+      "keyId": "https://example.test/.well-known/intent-commit#sha256-oFCDfYUHBYLM9zlLCYiEfMMSy4glm4lImfbyOc8XkaU",
+      "signature": "bprOZdToOvv8l60ydY8NMTlCHklJVM0IIOe9FYwy-1wy6aefJYfAU4cLv0MEITCo-y-DqNdeqFM3E50pm2cNDA"
+    }
+  },
+  "expectedUnsignedCanonical": "{\"federationVersion\":\"1.3\",\"id\":\"https://example.test/federation/utterances/msg-001\",\"issuer\":\"https://example.test\",\"message\":{\"author\":{\"displayName\":\"Alice\",\"id\":\"user-001\"},\"committedAt\":\"2026-01-02T03:04:05.000Z\",\"id\":\"msg-001\",\"protocol\":\"intent-commit\",\"protocolVersion\":\"1.0\",\"room\":{\"code\":\"DEMO01\"},\"state\":\"COMMITTED\",\"statement\":\"Meaning before transmission.\",\"type\":\"committed-message\"},\"proof\":{\"algorithm\":\"Ed25519\",\"keyId\":\"https://example.test/.well-known/intent-commit#sha256-oFCDfYUHBYLM9zlLCYiEfMMSy4glm4lImfbyOc8XkaU\",\"type\":\"IntentCommitEd25519Signature2026\"},\"protocol\":\"intent-commit\",\"protocolVersion\":\"1.0\",\"publishedAt\":\"2026-01-02T03:05:06.000Z\",\"type\":\"federated-committed-utterance\"}"
+}

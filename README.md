@@ -2,96 +2,68 @@
 
 **Think before you commit.**
 
-Intent Commit is an open protocol and reference client for **AI-mediated reflective human communication**. AI does not speak on behalf of a person. It helps the speaker inspect and clarify what they are willing to mean; only explicitly human-approved content becomes public.
+Intent Commit is an open protocol and reference client for **AI-mediated reflective human communication**. AI may help a person inspect and clarify meaning, but only explicit human approval creates a committed public statement.
 
-> Private draft → Reflect → Clarify → Approve → Commit → Optional public federation
+> Private draft → Reflect → Clarify → Approve → Commit → Optional public publication
 
 [简体中文 README](README.zh-CN.md)
 
-## v0.9: Claims & Argument Structure
+## v1.0: Protocol Stabilization
 
-v0.9 adds **author-approved fine-grained argument maps** for already-federated utterances.
+v1.0 freezes the core interoperability contract instead of adding another social feature.
 
-A public statement can now have an internal structure such as:
+The stable protocol now includes:
 
-```text
-reason-1 --------supports-------> claim-1
-objection-1 -----challenges-----> claim-1
-qualification-1 -qualifies------> claim-1
-```
+- Protocol version `1.0` with the human-approval state invariant;
+- `@intent-commit/protocol` version `1.0.0`;
+- deterministic canonical JSON, `IC-C14N/1`;
+- frozen cross-implementation test vectors;
+- a standalone verifier that does not require the Intent Commit server;
+- Federation 1.0–1.3 verification compatibility;
+- a written stability policy for future protocol changes.
 
-Supported node kinds:
+See `docs/spec-v1.0.md` and `docs/interoperability.md`.
 
-- `claim`
-- `reason`
-- `objection`
-- `qualification`
-
-Supported internal predicates:
-
-- `supports`
-- `challenges`
-- `qualifies`
-
-The crucial boundary is that an AI-generated structure is only a **private suggestion**. It is not stored as public discourse and does not become a federation object until the original human author reviews it, may edit it, and explicitly approves publication.
-
-```text
-Federated utterance
-      ↓
-Private AI structure suggestion
-      ↓
-Human review / editing
-      ↓
-Explicit approval
-      ↓
-Signed public argument map
-```
-
-With no OpenAI API key configured, demo mode makes no hidden inference: it returns one `claim` node containing the original committed statement and no edges.
-
-## Core communication invariant
+## Core invariant
 
 ```text
 DRAFT → REFLECTED ↔ CLARIFYING → APPROVED → COMMITTED
 ```
 
-The protocol rejects:
+The protocol rejects direct `DRAFT → COMMITTED` transitions. Reflective agents follow **Expand without inventing**: missing reasons or commitments are surfaced as uncertainty or questions, not silently authored by AI.
+
+## Independent verification
+
+Canonicalization is now part of the protocol rather than an implementation detail:
 
 ```text
-DRAFT → COMMITTED
+object → IC-C14N/1 → UTF-8 bytes → Ed25519 verify
 ```
 
-The Reflective Agent follows one central rule:
+Run the standalone verifier with:
 
-> **Expand without inventing.**
+```bash
+npm run verify -- object.json public-key.pem
+```
 
-Missing reasons, assumptions, commitments, or intentions should be surfaced as uncertainty or questions, not silently authored by the model.
+The frozen conformance vector is at `test-vectors/v1.0.json`.
 
-## Public commitment layers
+## Public object layers
 
-Intent Commit distinguishes several different public acts:
+Intent Commit keeps distinct acts distinct:
 
 ```text
 Room Commit
-    ≠
-External Adapter Publication
-    ≠
+External Publication
 Federation Publication
-    ≠
 Retraction / Revision
-    ≠
 Provenance Relation
-    ≠
 Argument-Map Publication
 ```
 
-Changing the audience, changing a previous public stance, asserting a relation to another utterance, or publishing an internal argument structure each requires a new explicit human action.
+One authorization never silently grants another.
 
-## Federation v1.3
-
-Federation uses a persistent Ed25519 instance identity. The current implementation verifies federation versions `1.0` through `1.3`.
-
-Public object families:
+Federation 1.3 object families remain:
 
 ```text
 federated-committed-utterance
@@ -101,185 +73,25 @@ federated-provenance-edge
 federated-argument-map
 ```
 
-Schemas:
+## Packages
 
 ```text
-packages/federation/schemas/federated-utterance.schema.json
-packages/federation/schemas/federation-relation.schema.json
-packages/federation/schemas/provenance-edge.schema.json
-packages/federation/schemas/argument-map.schema.json
-```
-
-See:
-
-- `docs/federation.md`
-- `docs/argument-structure.md`
-- `docs/protocol-package.md`
-
-## Three different graph layers
-
-Intent Commit keeps three meanings separate.
-
-Lifecycle:
-
-```text
-U1 → RETRACTION(U1)
-U1 → REVISION(U1 → U2)
-```
-
-Cross-utterance provenance:
-
-```text
-U1 --cites------> U2
-U1 --supports---> U2
-U1 --challenges-> U2
-```
-
-Inside one utterance:
-
-```text
-reason-1 --supports--> claim-1
-```
-
-This distinction prevents a software implementation from treating “I revised my statement”, “my statement supports another statement”, and “this sentence is a reason for another sentence” as the same kind of relation.
-
-## Argument-map rules
-
-The server independently validates every public map:
-
-- only the original author may publish it;
-- the subject must already be federated;
-- explicit `approved: true` is required;
-- at least one `claim` is required;
-- 1–32 nodes and at most 64 edges;
-- unique node IDs;
-- edges must reference existing, different nodes;
-- `reason` nodes may only create `supports` edges;
-- `objection` nodes may only create `challenges` edges;
-- `qualification` nodes may only create `qualifies` edges;
-- duplicate edges are rejected;
-- one public argument map per federated utterance in v0.9.
-
-The signed map is immutable. If the speaker changes the substantive utterance, the existing revision mechanism should produce a new committed/federated utterance, which may then receive its own map.
-
-## Federation endpoints
-
-Instance discovery:
-
-```text
-GET /.well-known/intent-commit
-```
-
-Public graph:
-
-```text
-GET /federation/graph
-```
-
-Signed utterance and relations:
-
-```text
-GET /federation/utterances/:messageId
-GET /federation/utterances/:messageId/relations
-```
-
-Signed lifecycle/provenance/argument objects:
-
-```text
-GET /federation/events/:eventId
-GET /federation/provenance/:edgeId
-GET /federation/arguments/:mapId
-```
-
-Private argument suggestion:
-
-```text
-POST /api/rooms/:code/arguments/suggest
-```
-
-Author-approved argument publication:
-
-```text
-POST /api/rooms/:code/federation/arguments
-```
-
-Example:
-
-```json
-{
-  "messageId": "message-id",
-  "nodes": [
-    { "id": "claim-1", "kind": "claim", "text": "..." },
-    { "id": "reason-1", "kind": "reason", "text": "..." }
-  ],
-  "edges": [
-    { "source": "reason-1", "target": "claim-1", "predicate": "supports" }
-  ],
-  "approved": true
-}
-```
-
-## Reference client
-
-On the signed-in author's own federated utterance, the web client exposes `Structure…`.
-
-The flow is intentionally two-stage:
-
-1. request a private structure suggestion;
-2. inspect/edit the JSON and separately confirm public publication.
-
-After publication, the message shows a stable **Argument map · signed** link instead of an editable structure.
-
-The existing federation actions remain available: `Cite…`, `Support…`, `Challenge…`, `Retract`, and `Revise…`.
-
-## Persistence and privacy boundary
-
-Ordinary room persistence stores accounts, password hashes, hashed sessions, rooms, memberships, roles, and committed statements.
-
-It does **not** store raw drafts, clarification text, Intent Cards, unapproved reformulations, or private AI argument suggestions as public discourse.
-
-Public federation artifacts are stored separately:
-
-```text
-federation_publications  signed utterances
-federation_events        signed retractions / revisions
-provenance_edges          signed cross-utterance relations
-argument_maps             signed intra-utterance structures
+packages/protocol/        stable Protocol 1.0 primitives + IC-C14N/1
+packages/federation/      Ed25519 Federation 1.0–1.3 primitives
+packages/verifier/        standalone object verifier
+packages/adapters-github/ GitHub Issues outbound adapter
 ```
 
 ## Run locally
 
-Requires Node.js **22.13+**.
+Requires Node.js 22.13+.
 
 ```bash
 cp .env.example .env
 npm start
 ```
 
-Open `http://localhost:3000`.
-
-Optional configuration:
-
-```env
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.6-luna
-DATABASE_PATH=./data/intent-commit.sqlite
-SESSION_TTL_DAYS=30
-COOKIE_SECURE=false
-GITHUB_TOKEN=
-FEDERATION_ENABLED=false
-PUBLIC_BASE_URL=
-FEDERATION_PRIVATE_KEY_PATH=./data/federation-private.pem
-FEDERATION_PUBLIC_KEY_PATH=./data/federation-public.pem
-```
-
-Docker:
-
-```bash
-docker compose up --build
-```
-
-SQLite and federation identity keys are persisted in the `intent_commit_data` volume.
+Optional AI reflection uses `OPENAI_API_KEY`. Federation remains opt-in and requires a stable `PUBLIC_BASE_URL` and persistent Ed25519 identity.
 
 ## Development
 
@@ -287,29 +99,18 @@ SQLite and federation identity keys are persisted in the `intent_commit_data` vo
 npm test
 ```
 
-The suite syntax-checks the server and browser client, then tests protocol transitions, account/session persistence, room governance, federation signatures, tamper detection, retraction/revision, provenance edges, argument-map validation/signing/uniqueness, demo suggestion non-invention, GitHub adapter behavior, and publication audit invariants.
+The suite checks server/browser/verifier syntax, protocol transitions, persistence, governance, federation signatures, lifecycle relations, provenance, argument maps, non-invention behavior, and the v1.0 interoperability vectors.
 
-## Project structure
+## Specification
 
-```text
-packages/protocol/             transport-neutral protocol primitives
-packages/federation/           Ed25519 federation primitives and schemas
-packages/adapters-github/      GitHub Issues outbound adapter
-public/                        reference web client
-src/store.js                   accounts, rooms, memberships and messages
-src/federation-publications.js signed utterance persistence
-src/federation-events.js       retraction / revision persistence
-src/provenance-edges.js        cross-utterance provenance persistence
-src/argument-maps.js           signed argument-map persistence
-src/argument-suggestions.js    private AI/demo structure suggestions
-server.js                      HTTP API, auth, federation, adapters and SSE
-test/                          protocol, persistence and federation tests
-docs/                          philosophy, protocol, federation and deployment notes
-```
+- `docs/spec-v1.0.md` — normative Protocol 1.0 contract
+- `docs/interoperability.md` — verifier and language-implementation guidance
+- `docs/federation.md` — Federation 1.3
+- `docs/argument-structure.md` — author-approved claim structure
 
-## Current limits
+## Current scope
 
-v0.9 remains **verifiable outbound federation**, not a complete federated social network. It does not yet implement remote inbox delivery, remote following, ActivityPub compatibility, inbound federation, cross-instance identity binding, replay protection for remote delivery, signed correction events for argument maps, formal database migrations, rate limiting, password recovery, or multi-process realtime fan-out.
+v1.0 stabilizes the protocol and outbound verification model. It is not yet a complete federated social network: inbound federation, remote delivery, cross-instance identity binding, replay protection, formal migrations, rate limiting, password recovery, and multi-process realtime fan-out remain future work.
 
 ## License
 

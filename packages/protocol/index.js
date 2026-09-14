@@ -1,14 +1,8 @@
 export const PROTOCOL_NAME = "intent-commit";
 export const PROTOCOL_VERSION = "1.0";
+export const CANONICALIZATION_VERSION = "IC-C14N/1";
 
-export const MESSAGE_STATES = Object.freeze([
-  "DRAFT",
-  "REFLECTED",
-  "CLARIFYING",
-  "APPROVED",
-  "COMMITTED",
-]);
-
+export const MESSAGE_STATES = Object.freeze(["DRAFT", "REFLECTED", "CLARIFYING", "APPROVED", "COMMITTED"]);
 export const ROOM_ROLES = Object.freeze(["owner", "moderator", "member"]);
 
 const transitions = new Map([
@@ -19,22 +13,14 @@ const transitions = new Map([
   ["COMMITTED", new Set()],
 ]);
 
-const listFields = [
-  "explicit_reasons",
-  "assumptions",
-  "ambiguities",
-  "possible_misinterpretations",
-  "questions_for_speaker",
-];
+const listFields = ["explicit_reasons", "assumptions", "ambiguities", "possible_misinterpretations", "questions_for_speaker"];
 
 export function canTransition(from, to) {
   return transitions.get(String(from))?.has(String(to)) || false;
 }
 
 export function assertTransition(from, to) {
-  if (!canTransition(from, to)) {
-    throw new Error(`Protocol transition ${from} → ${to} is not allowed.`);
-  }
+  if (!canTransition(from, to)) throw new Error(`Protocol transition ${from} → ${to} is not allowed.`);
   return true;
 }
 
@@ -44,9 +30,7 @@ export function normalizeIntentCard(card = {}) {
     communicative_intention: String(card.communicative_intention || "").trim(),
     proposed_statement: String(card.proposed_statement || "").trim(),
   };
-  for (const field of listFields) {
-    result[field] = Array.isArray(card[field]) ? card[field].map(String).map((v) => v.trim()).filter(Boolean) : [];
-  }
+  for (const field of listFields) result[field] = Array.isArray(card[field]) ? card[field].map(String).map((v) => v.trim()).filter(Boolean) : [];
   return result;
 }
 
@@ -67,10 +51,7 @@ export function createCommittedMessage({ id, roomCode, author, statement, commit
     state: "COMMITTED",
     id: String(id || "").trim(),
     room: { code: String(roomCode || "").trim().toUpperCase() },
-    author: {
-      id: String(author?.id || "").trim(),
-      displayName: String(author?.displayName || "").trim(),
-    },
+    author: { id: String(author?.id || "").trim(), displayName: String(author?.displayName || "").trim() },
     statement: String(statement || "").trim(),
     committedAt: String(committedAt || "").trim(),
   };
@@ -81,7 +62,7 @@ export function createCommittedMessage({ id, roomCode, author, statement, commit
 
 export function validateCommittedMessage(value) {
   const errors = [];
-  if (!value || typeof value !== "object") return { ok: false, errors: ["message must be an object"] };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, errors: ["message must be an object"] };
   if (value.protocol !== PROTOCOL_NAME) errors.push(`protocol must be ${PROTOCOL_NAME}`);
   if (value.protocolVersion !== PROTOCOL_VERSION) errors.push(`protocolVersion must be ${PROTOCOL_VERSION}`);
   if (value.type !== "committed-message") errors.push("type must be committed-message");
@@ -99,4 +80,30 @@ export function canManageMember(actorRole, targetRole) {
   if (actorRole === "owner") return targetRole !== "owner";
   if (actorRole === "moderator") return targetRole === "member";
   return false;
+}
+
+export function canonicalizeJson(value) {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("IC-C14N/1 rejects non-finite numbers.");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalizeJson).join(",")}]`;
+  if (typeof value === "object") {
+    const parts = [];
+    for (const key of Object.keys(value).sort()) {
+      const child = value[key];
+      if (child === undefined || typeof child === "function" || typeof child === "symbol" || typeof child === "bigint") {
+        throw new TypeError(`IC-C14N/1 rejects unsupported value at key ${key}.`);
+      }
+      parts.push(`${JSON.stringify(key)}:${canonicalizeJson(child)}`);
+    }
+    return `{${parts.join(",")}}`;
+  }
+  throw new TypeError("IC-C14N/1 accepts JSON-compatible values only.");
+}
+
+export function canonicalBytes(value) {
+  return Buffer.from(canonicalizeJson(value), "utf8");
 }

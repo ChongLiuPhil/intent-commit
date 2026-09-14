@@ -1,0 +1,9 @@
+{
+  "name": "@intent-commit/verifier",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Standalone verifier for Intent Commit Protocol 1.0 and Federation 1.0-1.3 objects.",
+  "license": "MIT",
+  "bin": { "intent-commit-verify": "./cli.js" },
+  "exports": { ".": "./index.js" }
+}

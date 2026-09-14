@@ -1,7 +1,7 @@
 {
   "name": "@intent-commit/federation",
-  "version": "0.4.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Verifiable federation primitives for signed utterances, lifecycle relations, provenance edges, and author-approved argument maps."
+  "description": "Stable Ed25519 federation primitives for Intent Commit Protocol 1.0; wire federation version remains 1.3."
 }
