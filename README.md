@@ -1,18 +1,12 @@
 # Intent Commit
 
-<!-- bilingual-home-intro -->
-> **English:** An open protocol and reference client for AI-mediated reflective human communication in which AI may help clarify meaning, while a person retains final control over what becomes a public statement.
->
-> **中文：** 一个面向 AI 辅助反思性人类沟通的开放协议与参考客户端：AI 可以帮助澄清意义，而人始终保留对公开表达内容的最终控制。
-<!-- /bilingual-home-intro -->
+[English](README.md) | [中文](README.zh-CN.md)
 
 **Think before you commit.**
 
 Intent Commit is an open protocol and reference client for **AI-mediated reflective human communication**. AI may help a person inspect and clarify meaning, but only explicit human approval creates a committed public statement.
 
 > Private draft → Reflect → Clarify → Approve → Commit → Optional public publication
-
-[简体中文 README](README.zh-CN.md)
 
 ## v1.0: Protocol Stabilization
 
