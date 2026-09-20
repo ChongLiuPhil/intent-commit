@@ -1,0 +1,35 @@
+schema_version: 1
+id: intent-commit
+repository: ChongLiuPhil/intent-commit
+
+title:
+  zh: "Intent Commit"
+  en: "Intent Commit"
+
+kind: protocol-and-reference-implementation
+status: active
+
+areas: [ai-epistemic-agency, research-methodology]
+topics: [reflective-communication, human-approval, federation, provenance]
+
+source_of_truth:
+  overview: "README.md"
+  specification: "docs/spec-v1.0.md"
+  interoperability: "docs/interoperability.md"
+  protocol_package: "packages/protocol/"
+  federation_package: "packages/federation/"
+  verifier: "packages/verifier/"
+  server: "server.js"
+
+website:
+  metadata: website.yaml
+  default_publish: false
+  bilingual_homepage_required: true
+  readme_default_language: en
+  language_default: auto
+  language_fallback: en
+
+notes: >
+  Vault Interface metadata records the existing public boundary. It does not
+  authorize new publication, change current deployment/provider state, or
+  replace repository-native governance and product sources.
