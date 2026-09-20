@@ -1,0 +1,32 @@
+schema_version: 1
+publish: false
+project_id: intent-commit
+
+language:
+  default: auto
+  fallback: en
+  supported: [en, zh]
+  detect_from_browser: true
+
+title:
+  zh: "Intent Commit"
+  en: "Intent Commit"
+
+status:
+  zh: "公开协议与参考实现；本 metadata 不新增独立站点发布授权。"
+  en: "Public protocol and reference implementation; this metadata grants no new standalone-site publication."
+
+summary:
+  zh: "面向 AI 中介反思性人类沟通的开放协议与参考客户端，以显式人类批准作为 committed public statement 的必要条件。"
+  en: "An open protocol and reference client for AI-mediated reflective human communication, with explicit human approval required for committed public statements."
+
+areas: [ai-epistemic-agency, research-methodology]
+featured: false
+links:
+  - href: "https://github.com/ChongLiuPhil/intent-commit"
+    label:
+      zh: "GitHub 仓库"
+      en: "GitHub repository"
+
+publication_notes: >
+  The repository is already public and the project is already represented in the Academic Vault's legacy published homepage state. publish=false here does not revoke that state; it prevents this metadata file from authorizing a new standalone Web publication or future homepage changes.
