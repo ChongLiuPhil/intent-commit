@@ -1,0 +1,56 @@
+ahicp:
+  protocol_name: "AI-Assisted Human Inquiry and Creation Protocol"
+  adopted_protocol_version: "0.3.0-draft"
+  adopted_protocol_commit: "ed5a60b1016497472072db108072ace59bcdb65d"
+  template_profile: "research-lite"
+  template_version: "0.3.1-draft"
+  template_source_commit: "02d0b3c02ca23073c760b6e0f761a468e0235a1c"
+  repository: "ChongLiuPhil/intent-commit"
+  canonical_language: "en"
+  mirror_language: "zh-CN"
+
+  profile_deviations:
+    - id: "AHICP-IC-DEV-001"
+      role: "authority"
+      local_rule: "Do not create a duplicate research Content Core. Protocol 1.0 specification, interoperability vectors, reflective-agent spec, federation docs, argument-structure docs, packages, and tests retain project-native authority by domain."
+      human_basis: "Existing project architecture plus explicit maintainer authorization for the 2026-09-21 account-wide Stack audit."
+    - id: "AHICP-IC-DEV-002"
+      role: "working-memory"
+      local_rule: "Use one lightweight PROJECT_STATUS.md for repository operational resume rather than a full research Working Memory tree."
+      human_basis: "Project is a protocol/reference implementation, not a manuscript-only research repository."
+    - id: "AHICP-IC-DEV-003"
+      role: "publication"
+      local_rule: "Public repository source and existing Academic Vault legacy publication do not authorize a separate hosted Web service. No current provider is inferred from deployment instructions."
+      human_basis: "website.yaml publication_notes and repository actual state."
+
+  bootstrap:
+    start_here:
+      canonical: "START_HERE.md"
+      mirror: "START_HERE.zh-CN.md"
+    context_interface: "AHICP_CONTEXT_INTERFACE.yaml"
+    session_context_bootstrap: "SESSION_CONTEXT_BOOTSTRAP.md"
+    agent_contract:
+      canonical: "AGENTS.md"
+      mirror: "AGENTS.zh-CN.md"
+
+  state:
+    project_status: "PROJECT_STATUS.md"
+    protocol_spec: "docs/spec-v1.0.md"
+    interoperability: "docs/interoperability.md"
+    reflective_agent_spec: "docs/agent-spec.md"
+    federation: "docs/federation.md"
+    argument_structure: "docs/argument-structure.md"
+    protocol_package: "packages/protocol/"
+    verifier: "packages/verifier/"
+    conformance_vector: "test-vectors/v1.0.json"
+    deployment_guidance: "docs/deployment.md"
+    security_policy: "SECURITY.md"
+
+  invariants:
+    - "Repository state outranks chat or model memory."
+    - "Protocol 1.0 human-approval invariant remains binding."
+    - "Room commitment, external publication, federation publication, retraction/revision, provenance assertions, and argument-map publication remain distinct authorizations."
+    - "AI must not silently invent facts, reasons, positions, emotions, or commitments."
+    - "The reference implementation does not redefine the stable protocol contract by accident."
+    - "Public repository visibility does not imply an authorized hosted Web service."
+    - "website.yaml publish=false does not revoke existing legacy Academic Vault representation but does block new standalone Web/homepage authorization from this metadata alone."
