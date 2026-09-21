@@ -93,6 +93,8 @@ npm start
 
 Optional AI reflection uses `OPENAI_API_KEY`. Federation remains opt-in and requires a stable `PUBLIC_BASE_URL` and persistent Ed25519 identity.
 
+Repository maintainers and AI agents should begin with [`START_HERE.md`](START_HERE.md). Current Stack adoption preserves Protocol 1.0 and the project-native product authorities rather than copying them into a second research core.
+
 ## Development
 
 ```bash

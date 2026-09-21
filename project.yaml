@@ -20,6 +20,18 @@ source_of_truth:
   federation_package: "packages/federation/"
   verifier: "packages/verifier/"
   server: "server.js"
+  project_status: "PROJECT_STATUS.md"
+  ahicp_manifest: "AHICP_MANIFEST.yaml"
+  ahicp_context_interface: "AHICP_CONTEXT_INTERFACE.yaml"
+  project_stack: "project-stack.yaml"
+  publishing_contract: "publishing.yaml"
+
+current_stack:
+  protocol_entry: AHICP
+  ahicp_profile: project-native-protocol-governance
+  repository_source_public: true
+  web_authorized: false
+  web_provider: null
 
 website:
   metadata: website.yaml

@@ -1,0 +1,7 @@
+schema: inquiry-publishing-stack-lock/v2
+generated: true
+resolved:
+  ahicp: 02d0b3c02ca23073c760b6e0f761a468e0235a1c
+  ppf: 9a6005de85f032095e36eea03fda317e73126538
+  vault_interface: 592c6e2e938f995b7b3e7df07a72f7f1e2c50c5a
+  starter: 05857086e240cbd269eae91af8419ea0921c01fa

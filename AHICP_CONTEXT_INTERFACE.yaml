@@ -1,0 +1,76 @@
+ahicp_context_interface:
+  version: "0.1-draft"
+  mode: "repository-backed-functional-mapping"
+  authoritative_store: "github"
+  canonical_language: "en"
+
+  control_plane:
+    manifest: "AHICP_MANIFEST.yaml"
+    project_status: "PROJECT_STATUS.md"
+    start_here: "START_HERE.md"
+    agent_contract: "AGENTS.md"
+    authoritative_session_copy: false
+
+  context_policy:
+    retrieval: "selective-on-demand"
+    cache_authority: "none"
+    read_latest_before_high_impact_action: true
+    read_latest_before_write: true
+    invalidate_touched_cache_after_write: true
+    write_through_repository: true
+
+  task_routes:
+    PROTOCOL:
+      required:
+        - "docs/spec-v1.0.md"
+        - "packages/protocol/"
+        - "docs/interoperability.md"
+      optional:
+        - "test-vectors/"
+        - "packages/verifier/"
+    AGENT:
+      required:
+        - "docs/agent-spec.md"
+        - "docs/spec-v1.0.md"
+      optional:
+        - "server.js"
+    FEDERATION:
+      required:
+        - "docs/federation.md"
+        - "packages/federation/"
+        - "docs/spec-v1.0.md"
+      optional:
+        - "packages/adapters-github/"
+    SECURITY:
+      required:
+        - "SECURITY.md"
+        - "docs/deployment.md"
+        - "server.js"
+      optional:
+        - "docs/federation.md"
+    IMPLEMENTATION:
+      required:
+        - "docs/spec-v1.0.md"
+        - "server.js"
+        - "test/"
+      optional:
+        - "packages/"
+        - "public/"
+    GOVERNANCE:
+      required:
+        - "PROJECT_STATUS.md"
+        - "AHICP_ADOPTION.md"
+        - "project.yaml"
+    PUBLICATION:
+      required:
+        - "publishing.yaml"
+        - "website.yaml"
+        - "project.yaml"
+        - "docs/deployment.md"
+
+  failure_states:
+    - "CONTEXT-STALE"
+    - "REVISION-CONFLICT"
+    - "PROTOCOL-AUTHORITY-CONFLICT"
+    - "SECURITY-DOCUMENTATION-DRIFT"
+    - "PUBLICATION-AUTHORIZATION-UNCLEAR"

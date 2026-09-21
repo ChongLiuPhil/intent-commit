@@ -93,6 +93,8 @@ npm start
 
 可选的 AI 反思功能使用 `OPENAI_API_KEY`。Federation 仍为可选功能，并要求稳定的 `PUBLIC_BASE_URL` 与持久 Ed25519 身份。
 
+仓库维护者与 AI Agent 应从 [`START_HERE.zh-CN.md`](START_HERE.zh-CN.md) 开始。当前 Stack adoption 保留 Protocol 1.0 与项目原生产品权威，不把它们复制成第二套研究核心。
+
 ## 开发
 
 ```bash

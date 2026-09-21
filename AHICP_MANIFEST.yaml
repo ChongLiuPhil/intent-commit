@@ -1,0 +1,62 @@
+ahicp:
+  protocol_name: "AI-Assisted Human Inquiry and Creation Protocol"
+  adopted_protocol_version: "0.3.0-draft"
+  adopted_protocol_commit: "ed5a60b1016497472072db108072ace59bcdb65d"
+  template_profile: "research-lite"
+  template_version: "0.3.1-draft"
+  template_source_commit: "02d0b3c02ca23073c760b6e0f761a468e0235a1c"
+  repository: "ChongLiuPhil/intent-commit"
+  canonical_language: "en"
+  mirror_language: "zh-CN"
+
+  profile_deviations:
+    - id: "AHICP-IC-DEV-001"
+      role: "authority"
+      local_rule: "Do not create a duplicate research Content Core. Protocol 1.0 specification and normative schemas/package remain the stable interoperability authority; agent behavior, federation, security, deployment, and implementation retain separate project-native authorities."
+      human_basis: "Existing v1.0 protocol architecture plus explicit maintainer authorization for the 2026-09-21 account-wide Stack audit."
+    - id: "AHICP-IC-DEV-002"
+      role: "working-memory"
+      local_rule: "Use one lightweight PROJECT_STATUS.md operational resume rather than a full research Working Memory tree."
+      human_basis: "Project is protocol/reference software, not a manuscript-only research project."
+    - id: "AHICP-IC-DEV-003"
+      role: "publication"
+      local_rule: "Public repository/source and legacy Academic Vault representation do not imply an active standalone Web provider. docs/deployment.md describes deployability, not observed production state."
+      human_basis: "Repository provider actual state reconstructed during the Stack audit."
+
+  bootstrap:
+    start_here:
+      canonical: "START_HERE.md"
+      mirror: "START_HERE.zh-CN.md"
+    context_interface: "AHICP_CONTEXT_INTERFACE.yaml"
+    session_context_bootstrap: "SESSION_CONTEXT_BOOTSTRAP.md"
+    agent_contract:
+      canonical: "AGENTS.md"
+      mirror: "AGENTS.zh-CN.md"
+
+  state:
+    project_status: "PROJECT_STATUS.md"
+    protocol_spec: "docs/spec-v1.0.md"
+    protocol_package: "packages/protocol/"
+    reflective_agent_spec: "docs/agent-spec.md"
+    interoperability: "docs/interoperability.md"
+    federation: "docs/federation.md"
+    argument_structure: "docs/argument-structure.md"
+    security_policy: "SECURITY.md"
+    deployment_guide: "docs/deployment.md"
+    implementation_server: "server.js"
+    tests: "test/"
+    public_overview:
+      canonical: "README.md"
+      mirror: "README.zh-CN.md"
+
+  invariants:
+    - "Repository state outranks chat or model memory."
+    - "Protocol 1.0 specification and normative schema/package remain the interoperability authority."
+    - "Explicit human approval remains necessary before a statement becomes COMMITTED."
+    - "Distinct public acts retain distinct authorization boundaries."
+    - "Reflective agents must expand without inventing."
+    - "AI proposals do not become human commitments or maintainer decisions by default."
+    - "Public repository visibility does not prove a standalone Web deployment exists."
+    - "docs/deployment.md is deployment guidance, not provider actual-state evidence."
+    - "website.yaml publish=false remains the boundary for new standalone-site or Academic Vault/homepage publication changes."
+    - "Known security-documentation inconsistencies must remain visible until deliberately reviewed."
