@@ -1,0 +1,32 @@
+schema: inquiry-publishing-stack/v2
+project:
+  id: intent-commit
+profile: full-research-publication
+components:
+  governance:
+    framework: ahicp
+    source: ChongLiuPhil/AI-Assisted-Human-Inquiry-and-Creation-Protocol
+    adoption_state: active
+    profile: project-native-protocol-governance
+    template_source_commit: 02d0b3c02ca23073c760b6e0f761a468e0235a1c
+    project_adopted_commit: ed5a60b1016497472072db108072ace59bcdb65d
+    adoption_mode: functional-map-protocol-agent-federation-security
+  publishing:
+    framework: ppf
+    source: ChongLiuPhil/Personal-Publishing-Framework
+    adoption_state: active
+    profile: public-source-no-standalone-provider
+    template_source_commit: 9a6005de85f032095e36eea03fda317e73126538
+    project_adopted_commit: e660b48fb216c28c8faa1f0fe2d0816401e1de2c
+    adoption_mode: lifecycle-only-no-observed-web-deployment
+  portfolio_interface:
+    framework: vault-interface
+    source: ChongLiuPhil/Vault-interface
+    adoption_state: active
+    version: 1.0.0-draft
+    template_source_commit: 592c6e2e938f995b7b3e7df07a72f7f1e2c50c5a
+    project_adopted_commit: 79d64b12275a5cc7c09236b144bf4213fa7afc5e
+starter:
+  source: ChongLiuPhil/Inquiry-Publishing-Project-Starter
+  profile: full-research-publication
+  adopted_commit: 05857086e240cbd269eae91af8419ea0921c01fa
