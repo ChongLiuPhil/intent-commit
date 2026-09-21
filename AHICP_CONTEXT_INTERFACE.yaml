@@ -1,0 +1,65 @@
+ahicp_context_interface:
+  version: "0.1-draft"
+  mode: "repository-backed-functional-mapping"
+  authoritative_store: "github"
+  canonical_language: "en"
+
+  control_plane:
+    manifest: "AHICP_MANIFEST.yaml"
+    project_status: "PROJECT_STATUS.md"
+    start_here: "START_HERE.md"
+    agent_contract: "AGENTS.md"
+    authoritative_session_copy: false
+
+  context_policy:
+    retrieval: "selective-on-demand"
+    cache_authority: "none"
+    read_latest_before_high_impact_action: true
+    read_latest_before_write: true
+    invalidate_touched_cache_after_write: true
+    write_through_repository: true
+
+  task_routes:
+    PROTOCOL:
+      required:
+        - "docs/spec-v1.0.md"
+        - "docs/interoperability.md"
+        - "test-vectors/v1.0.json"
+        - "packages/protocol/"
+    AGENT:
+      required:
+        - "docs/agent-spec.md"
+        - "docs/spec-v1.0.md"
+    FEDERATION:
+      required:
+        - "docs/federation.md"
+        - "docs/argument-structure.md"
+        - "docs/spec-v1.0.md"
+        - "packages/federation/"
+    IMPLEMENTATION:
+      required:
+        - "docs/spec-v1.0.md"
+        - "package.json"
+        - ".github/workflows/ci.yml"
+      optional:
+        - "server.js"
+        - "src/"
+        - "packages/"
+    SECURITY:
+      required:
+        - "docs/deployment.md"
+        - "SECURITY.md"
+        - "docs/spec-v1.0.md"
+    PUBLICATION:
+      required:
+        - "publishing.yaml"
+        - "website.yaml"
+        - "project.yaml"
+
+  failure_states:
+    - "CONTEXT-STALE"
+    - "REVISION-CONFLICT"
+    - "PROTOCOL-CONTRACT-DRIFT"
+    - "AUTHORIZATION-BOUNDARY-DRIFT"
+    - "SECURITY-DOC-SYNC-DEFECT"
+    - "PUBLICATION-AUTHORIZATION-UNCLEAR"
