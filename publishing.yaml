@@ -1,0 +1,59 @@
+schema: ppf/v0.1
+framework:
+  source: ChongLiuPhil/Personal-Publishing-Framework
+  adopted_version: 0.1.1-draft
+  adopted_commit: e660b48fb216c28c8faa1f0fe2d0816401e1de2c
+
+project:
+  id: intent-commit
+  type: public-protocol-and-reference-implementation
+  title: "Intent Commit"
+
+source:
+  canonical: git
+  branch: main
+  visibility: public
+
+publication:
+  repository_source:
+    enabled: true
+    visibility: public
+    authorization_state: existing-public-source
+  web:
+    format: html
+    mode: on-demand
+    enabled: false
+    authorization_state: not-authorized
+    visibility: public
+    access:
+      mode: not-configured
+      implementation: null
+
+deployment:
+  web:
+    provider: null
+    enabled: false
+    status: no-observed-production-provider
+    production_url: null
+    integration_state: DECLARED
+    authorization_state: HUMAN_AUTHORIZATION_REQUIRED
+    cutover_state: BLOCKED
+    deployment_guide: "docs/deployment.md"
+    guide_is_actual_state: false
+
+release:
+  current_package_version: "1.0.0"
+  github_release_observed: false
+  require_explicit_release: true
+  continuous_web_is_release: false
+  repository_visibility_is_release_authorization: false
+
+portfolio:
+  academic_homepage:
+    metadata: "website.yaml"
+    publish_flag: false
+    legacy_public_representation_preserved: true
+
+archive:
+  preserve_source: true
+  preserve_release_artifacts: true
