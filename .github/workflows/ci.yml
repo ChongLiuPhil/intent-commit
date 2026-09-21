@@ -13,3 +13,12 @@ jobs:
         with:
           node-version: '22.22.1'
       - run: npm test
+
+
+  governance:
+    name: Stack governance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate current Stack and publication boundary
+        run: python3 scripts/check_stack_state.py
