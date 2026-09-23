@@ -1,0 +1,35 @@
+name: Cloudflare plan check
+on:
+  pull_request:
+    paths: ["project.infrastructure.json","docs/CLOUDFLARE_ROLLOUT_PLAN.md",".github/workflows/cloudflare-plan-check.yml"]
+  push:
+    branches: [main]
+    paths: ["project.infrastructure.json","docs/CLOUDFLARE_ROLLOUT_PLAN.md",".github/workflows/cloudflare-plan-check.yml"]
+permissions: {contents: read}
+jobs:
+  validate-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with: {python-version: "3.12"}
+      - run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("project.infrastructure.json").read_text())
+          assert d["github"]["repositoryVisibility"]=="public"
+          assert d["cloudflare"]["applicationVisibility"]=="private"
+          assert d["cloudflare"]["previewVisibility"]=="private"
+          assert d["cloudflare"]["publicBypass"] is False
+          assert d["deployment"]["previewDeployments"] is False
+          assert d["release"]["state"]=="public"
+          assert d["release"]["openSource"] is True
+          assert d["policy"]["paidServicesAllowed"] is False
+          p=Path("docs/CLOUDFLARE_ROLLOUT_PLAN.md").read_text().lower()
+          assert "planning only" in p
+          assert "does not infer or authorize a public web deployment" in p
+          assert "no scheduled polling" in p
+          PY
+      - run: "! grep -RniE 'wrangler[[:space:]]+deploy|versions[[:space:]]+upload|api[_-]?token|private[_-]?key|client[_-]?secret' .github/workflows/cloudflare-plan-check.yml project.infrastructure.json docs/CLOUDFLARE_ROLLOUT_PLAN.md"
